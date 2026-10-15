@@ -14,6 +14,25 @@ namespace OpenAgent.Router.Tests.Providers;
 
 public class OpenAgentEngineProviderTests
 {
+    [Theory]
+    [InlineData(null, "server-profile")]
+    [InlineData("client-profile", "client-profile")]
+    public async Task ExecutionModelDefault_IsIndependentAndDoesNotOverrideClientHeader(string? supplied, string expected)
+    {
+        var settings = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["DefaultLlmProfileId"] = "server-profile"
+        }).Build();
+        using var provider = new OpenAgentEngineProvider("engine", settings, new StubRouteTable());
+        using var request = new HttpRequestMessage(HttpMethod.Post, "http://engine/chat");
+        if (supplied != null) request.Headers.Add("X-OpenAgent-Llm-Profile-Id", supplied);
+        await provider.ConfigureRequestAsync(request,
+            new AgentForwardingTarget("http://engine", request.RequestUri!), CancellationToken.None);
+        Assert.Equal(expected, request.Headers.GetValues("X-OpenAgent-Llm-Profile-Id").Single());
+        var stream = await provider.ResolveForwardingAsync("sse", "tenant", "conversation", CancellationToken.None);
+        Assert.EndsWith("/chat/stream", stream!.RequestUri.AbsolutePath);
+    }
+
     [Fact]
     public async Task Provider_UsesRouteTableContextAndConfiguredProtocolPaths()
     {

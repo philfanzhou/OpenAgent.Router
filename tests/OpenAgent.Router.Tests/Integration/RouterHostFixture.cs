@@ -1,13 +1,16 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Hosting.Server;
+using IServer = Microsoft.AspNetCore.Hosting.Server.IServer;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Xunit;
+using StackExchange.Redis;
+using System.Text.Json;
 
 namespace OpenAgent.Router.Tests.Integration;
 
@@ -49,11 +52,19 @@ internal sealed class RouterApplicationFactory(
                 ["RouterSettings:IntentRecognition:Enabled"] = "false",
                 ["RouterSettings:IntentRecognition:FallbackAgentId"] = "default",
                 ["RouterSettings:Routing:EngineEndpoint"] = engineEndpoint,
+                ["RouterSettings:AgentProviders:Providers:0:Settings:DefaultLlmProfileId"] = "test-execution-profile",
                 ["RouterSettings:RateLimiting:RequestsPerSecond"] = requestsPerSecond.ToString(),
                 ["RouterSettings:RateLimiting:BurstCapacity"] = burstCapacity.ToString()
             });
             if (settings != null) configuration.AddInMemoryCollection(settings);
         });
+        // Minimal-host test overrides are applied after Program's conditional Redis registration.
+        // Supply the real multiplexer explicitly so this test cannot silently exercise memory storage.
+        if (settings?.TryGetValue("ConnectionStrings:Redis", out string? connection) == true)
+        {
+            builder.ConfigureTestServices(services => services.AddSingleton<IConnectionMultiplexer>(
+                _ => ConnectionMultiplexer.Connect(connection!)));
+        }
     }
 }
 
@@ -74,6 +85,7 @@ public sealed class TestEngineHost(string responseName) : IAsyncDisposable
     public string? LastAgentId { get; private set; }
     public string? LastChatBody { get; private set; }
     public string? LastDecisionBody { get; private set; }
+    public string? LastExecutionProfile { get; private set; }
 
     public string? LastUserId { get; private set; }
 
@@ -136,13 +148,23 @@ public sealed class TestEngineHost(string responseName) : IAsyncDisposable
             LastAgentId = context.Request.Headers["X-Agent-Id"].FirstOrDefault();
             using var bodyReader = new StreamReader(context.Request.Body);
             LastChatBody = await bodyReader.ReadToEndAsync(context.RequestAborted);
+            using var parsed = JsonDocument.Parse(LastChatBody);
+            JsonElement chatContext = parsed.RootElement.GetProperty("context");
+            LastExecutionProfile = chatContext.TryGetProperty("llmProfileId", out JsonElement profile)
+                && profile.ValueKind == JsonValueKind.String ? profile.GetString()
+                : context.Request.Headers["X-OpenAgent-Llm-Profile-Id"].FirstOrDefault();
+            if (string.IsNullOrWhiteSpace(LastExecutionProfile))
+            {
+                context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                return;
+            }
             context.Response.ContentType = "application/json";
             context.Response.Headers.CacheControl = "public, max-age=60";
             await context.Response.WriteAsync(
                 $$"""{"message":"{{responseName}}"}""",
                 context.RequestAborted).ConfigureAwait(false);
         });
-        application.MapPost("/api/v1/agent/chat/sse", async context =>
+        RequestDelegate streamHandler = async context =>
         {
             context.Response.ContentType = "text/event-stream";
             context.Response.Headers.CacheControl = "no-cache";
@@ -158,7 +180,9 @@ public sealed class TestEngineHost(string responseName) : IAsyncDisposable
             {
                 _sseCanceled.TrySetResult(true);
             }
-        });
+        };
+        application.MapPost("/api/v1/agent/chat/sse", streamHandler);
+        application.MapPost("/api/v1/agent/chat/stream", streamHandler);
         application.MapPost(
             "/api/v1/agent/conversations/{conversationId}/compact",
             (HttpContext context, string conversationId) =>

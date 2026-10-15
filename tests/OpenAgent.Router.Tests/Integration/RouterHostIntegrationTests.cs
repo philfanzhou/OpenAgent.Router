@@ -63,6 +63,7 @@ public sealed class RouterHostIntegrationTests : IClassFixture<RouterHostFixture
         using (var firstRouter = _fixture.CreateFactory(settings: settings))
         using (var client = firstRouter.CreateClient())
         {
+            Assert.NotNull(firstRouter.Services.GetService(typeof(StackExchange.Redis.IConnectionMultiplexer)));
             using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/agent/chat")
             {
                 Content = JsonContent.Create(new { message = "invoice" })
@@ -83,6 +84,7 @@ public sealed class RouterHostIntegrationTests : IClassFixture<RouterHostFixture
         Assert.Equal(HttpStatusCode.OK, next.StatusCode);
         Assert.Equal("finance", _fixture.PrimaryEngine.LastAgentId);
         Assert.Equal(id, _fixture.PrimaryEngine.LastConversationId);
+        Assert.Equal("test-execution-profile", _fixture.PrimaryEngine.LastExecutionProfile);
         Assert.Equal(decisions + 1, _fixture.PrimaryEngine.DecisionCount);
     }
 

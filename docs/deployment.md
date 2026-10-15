@@ -70,13 +70,15 @@ OpenAgentEngine 目录仅接受当前租户的 `Published` Agent（共享枚举�
 
 原 `IntentRecognition:ProviderId/AgentId` 不再用于选择链路；不需要配置 `intent-router`。客户端 `llmProfileId` 原样保留给任务执行，不决定 Router 使用哪个模型。
 
+当前 Engine 的任务执行仍要求 LLM profile。可在对应 Provider 的 Settings 设置 `DefaultLlmProfileId`（Compose 中为 `ENGINE_LLM_PROFILE_ID`），Router 会通过 `X-OpenAgent-Llm-Profile-Id` 提供默认执行模型；客户端显式传入的执行 profile 优先。没有配置默认值时，客户端仍需携带执行 profile。上面的仅 `message` 示例以已配置服务端默认值为前提；此配置与 Router 的 `DecisionModel:ModelId` 相互独立。Engine 还需接受透传的用户令牌并采用一致的租户解析。
+
 绑定通过 Redis `SET NX` 原子创建，包含版本、用户、Provider、Agent 和到期时间，转发失败也不换绑。过期会话返回 404。会话删除先保存墓碑，再转发 DELETE；即使下游删除失败，该 ID 也不能再次进入 chat 创建对话。清理下游残留数据由运维处理。旧版本仅包含 Provider、没有用户与 Agent 的绑定会被拒绝，升级后客户端应创建新会话。
 
 生产 Redis 应持久化、备份并使用适合环境的访问控制。示例开启 AOF、`noeviction` 且不暴露 Redis 宿主机端口；它不是高可用集群模板。Router 可以配置静态实例地址作为服务发现回退，但 Redis 会话状态或授权不可用时不能绕过。
 
 ## 使用 Docker Compose
 
-1. 复制 `deploy/.env.example` 到 `deploy/.env`，填写身份服务 Authority、Audience、ClientId，Engine 的容器可达地址以及模型 Endpoint / ModelId。
+1. 复制 `deploy/.env.example` 到 `deploy/.env`，填写身份服务 Authority、Audience、ClientId，Engine 的容器可达地址、默认执行 profile，以及专用决策模型 Endpoint / ModelId。
 2. 将专用模型密钥写入仓库之外的文件，设置 `DECISION_MODEL_API_KEY_FILE` 指向该文件；文件必须允许容器的非 root 用户读取。无鉴权网关可使用空文件。
 3. 从仓库根目录执行：
 

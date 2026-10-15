@@ -22,6 +22,7 @@ internal sealed class OpenAgentEngineProvider : IAgentProvider, IDisposable
     private readonly string _chatPath;
     private readonly string _conversationPath;
     private readonly string? _baseUrl;
+    private readonly string? _defaultLlmProfileId;
     private readonly IReadOnlyDictionary<string, string> _serviceHeaders;
     private readonly IRouteTable _routeTable;
     private readonly HttpMessageInvoker _httpClient;
@@ -36,6 +37,7 @@ internal sealed class OpenAgentEngineProvider : IAgentProvider, IDisposable
         bool allowInsecureTls = false)
     {
         Id = id;
+        _defaultLlmProfileId = settings["DefaultLlmProfileId"];
         _agentListPath = NormalizePath(settings["AgentListPath"], "/api/v1/agent/agents");
         _chatPath = NormalizePath(settings["ChatPath"], "/api/v1/agent/chat");
         _conversationPath = NormalizePath(
@@ -251,7 +253,8 @@ internal sealed class OpenAgentEngineProvider : IAgentProvider, IDisposable
             return Task.FromResult<AgentForwardingTarget?>(null);
         }
 
-        string actionSuffix = string.IsNullOrWhiteSpace(action) ? string.Empty : $"/{action}";
+        string? executionAction = string.Equals(action, "sse", StringComparison.OrdinalIgnoreCase) ? "stream" : action;
+        string actionSuffix = string.IsNullOrWhiteSpace(executionAction) ? string.Empty : $"/{executionAction}";
         string targetUrl = $"{endpoint.TrimEnd('/')}{_chatPath}{actionSuffix}";
         AgentForwardingTarget target = new(
             endpoint.TrimEnd('/'),
@@ -272,6 +275,11 @@ internal sealed class OpenAgentEngineProvider : IAgentProvider, IDisposable
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (!request.Headers.Contains("X-OpenAgent-Llm-Profile-Id")
+            && !string.IsNullOrWhiteSpace(_defaultLlmProfileId))
+        {
+            request.Headers.TryAddWithoutValidation("X-OpenAgent-Llm-Profile-Id", _defaultLlmProfileId);
+        }
         return ValueTask.CompletedTask;
     }
 
