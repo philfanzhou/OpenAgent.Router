@@ -1,3 +1,4 @@
 namespace OpenAgent.Router;
 
-public sealed record CachedResponse(int StatusCode, string? ContentType, byte[] Body);
+public sealed record CachedResponse(int StatusCode, string? ContentType, byte[] Body,
+    Dictionary<string, string>? RoutingHeaders = null);

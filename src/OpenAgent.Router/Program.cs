@@ -8,6 +8,12 @@ using System.Security.Claims;
 
 var builder = WebApplication.CreateBuilder(args);
 
+if (!builder.Environment.IsDevelopment()
+    && string.IsNullOrWhiteSpace(builder.Configuration.GetConnectionString("Redis")))
+{
+    throw new InvalidOperationException("Production Router requires ConnectionStrings:Redis for shared conversation state.");
+}
+
 // 上传请求先过 Router 再转发 Engine；Kestrel 默认 30 MB 请求体上限会在转发前拒绝
 // 更大的附件，这里与 Engine 侧的 FileAssets 上限（默认 100 MB，单请求单文件）对齐
 // 放开，并留出 multipart 开销余量。
@@ -72,7 +78,6 @@ app.UseWhen(
     {
         branch.UseMiddleware<RateLimitingMiddleware>();
         branch.UseMiddleware<IdempotencyMiddleware>();
-        branch.UseMiddleware<QueryCacheMiddleware>();
     });
 app.MapAgentAuthenticationEndpoints();
 app.MapRouterEndpoints();

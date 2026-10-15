@@ -22,17 +22,19 @@ public sealed class RouterHostFixture : IAsyncLifetime
     internal RouterApplicationFactory CreateFactory(
         string? engineEndpoint = null,
         int requestsPerSecond = 100,
-        int burstCapacity = 200) =>
+        int burstCapacity = 200,
+        Dictionary<string, string?>? settings = null) =>
         new(
             engineEndpoint ?? PrimaryEngine.Endpoint,
             requestsPerSecond,
-            burstCapacity);
+            burstCapacity, settings);
 }
 
 internal sealed class RouterApplicationFactory(
     string engineEndpoint,
     int requestsPerSecond,
-    int burstCapacity) : WebApplicationFactory<Program>
+    int burstCapacity,
+    Dictionary<string, string?>? settings = null) : WebApplicationFactory<Program>
 {
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -50,6 +52,7 @@ internal sealed class RouterApplicationFactory(
                 ["RouterSettings:RateLimiting:RequestsPerSecond"] = requestsPerSecond.ToString(),
                 ["RouterSettings:RateLimiting:BurstCapacity"] = burstCapacity.ToString()
             });
+            if (settings != null) configuration.AddInMemoryCollection(settings);
         });
     }
 }
@@ -61,10 +64,16 @@ public sealed class TestEngineHost(string responseName) : IAsyncDisposable
         TaskCreationOptions.RunContinuationsAsynchronously);
     private WebApplication? _application;
     private int _chatRequestCount;
+    private int _decisionCount;
 
     public string Endpoint { get; private set; } = string.Empty;
 
     public int ChatRequestCount => Volatile.Read(ref _chatRequestCount);
+    public int DecisionCount => Volatile.Read(ref _decisionCount);
+    public string? LastConversationId { get; private set; }
+    public string? LastAgentId { get; private set; }
+    public string? LastChatBody { get; private set; }
+    public string? LastDecisionBody { get; private set; }
 
     public string? LastUserId { get; private set; }
 
@@ -100,7 +109,21 @@ public sealed class TestEngineHost(string responseName) : IAsyncDisposable
             LastAuthorization = context.Request.Headers.Authorization.FirstOrDefault();
             return Results.Json(new[]
             {
-                new { agentId = "default", name = "Default", description = "Test agent" }
+                new { agentId = "default", name = "Default", description = "General questions", tenantId = "tenant-1", status = 2 },
+                new { agentId = "finance", name = "Finance", description = "Invoices", tenantId = "tenant-1", status = 2 },
+                new { agentId = "draft", name = "Draft", description = "Unpublished", tenantId = "tenant-1", status = 0 },
+                new { agentId = "private", name = "Private", description = "Other tenant", tenantId = "tenant-2", status = 2 }
+            });
+        });
+        application.MapPost("/v1/chat/completions", async context =>
+        {
+            Interlocked.Increment(ref _decisionCount);
+            using var reader = new StreamReader(context.Request.Body);
+            LastDecisionBody = await reader.ReadToEndAsync(context.RequestAborted);
+            await context.Response.WriteAsJsonAsync(new
+            {
+                choices = new[] { new { finish_reason = "stop",
+                    message = new { content = "{\"agentId\":\"finance\",\"confidence\":0.95}" } } }
             });
         });
         application.MapPost("/api/v1/agent/chat", async context =>
@@ -109,6 +132,10 @@ public sealed class TestEngineHost(string responseName) : IAsyncDisposable
             LastUserId = context.Request.Headers["X-User-Id"].FirstOrDefault();
             LastTenantId = context.Request.Headers["X-Tenant-Id"].FirstOrDefault();
             LastAuthorization = context.Request.Headers.Authorization.FirstOrDefault();
+            LastConversationId = context.Request.Headers["X-Conversation-Id"].FirstOrDefault();
+            LastAgentId = context.Request.Headers["X-Agent-Id"].FirstOrDefault();
+            using var bodyReader = new StreamReader(context.Request.Body);
+            LastChatBody = await bodyReader.ReadToEndAsync(context.RequestAborted);
             context.Response.ContentType = "application/json";
             context.Response.Headers.CacheControl = "public, max-age=60";
             await context.Response.WriteAsync(

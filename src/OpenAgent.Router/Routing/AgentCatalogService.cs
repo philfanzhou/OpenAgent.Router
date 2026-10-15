@@ -10,14 +10,21 @@ internal sealed class AgentCatalogService(
 {
     private readonly IReadOnlyList<IAgentAccessControl> _accessControls = accessControls.ToArray();
 
-    public async Task<IReadOnlyList<AgentCatalogEntry>> GetAuthorizedAsync(
+    public Task<IReadOnlyList<AgentCatalogEntry>> GetAuthorizedAsync(
         AgentProviderRequestContext requestContext,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken) => GetAuthorizedAsync(requestContext, cancellationToken, null);
+
+    private async Task<IReadOnlyList<AgentCatalogEntry>> GetAuthorizedAsync(
+        AgentProviderRequestContext requestContext,
+        CancellationToken cancellationToken,
+        string? providerId)
     {
         List<AgentCatalogEntry> entries = [];
         bool hasAvailableProvider = false;
         foreach (IAgentProvider provider in providers.Providers)
         {
+            if (providerId != null && !string.Equals(providerId, provider.Id, StringComparison.OrdinalIgnoreCase)) continue;
+            if (!provider.SupportsRouterConversationIds) continue;
             AgentProviderCatalog catalog;
             try
             {
@@ -40,7 +47,8 @@ internal sealed class AgentCatalogService(
             hasAvailableProvider = true;
 
             IReadOnlyList<AgentSummary> authorized = catalog.Agents
-                .Where(agent => !string.IsNullOrWhiteSpace(agent.AgentId))
+                .Where(agent => !string.IsNullOrWhiteSpace(agent.AgentId)
+                    && agent.AgentId.Length <= 256 && !agent.AgentId.Any(char.IsControl))
                 .ToArray();
             foreach (IAgentAccessControl accessControl in _accessControls)
             {
@@ -80,11 +88,12 @@ internal sealed class AgentCatalogService(
     public async Task<AgentCatalogEntry> ResolveAsync(
         AgentProviderRequestContext requestContext,
         string agentId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? providerId = null)
     {
         IReadOnlyList<AgentCatalogEntry> entries = await GetAuthorizedAsync(
             requestContext,
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken, providerId).ConfigureAwait(false);
         AgentCatalogEntry? entry = entries.FirstOrDefault(candidate =>
             string.Equals(
                 candidate.Agent.AgentId,

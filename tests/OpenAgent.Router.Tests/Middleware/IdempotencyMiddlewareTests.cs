@@ -191,7 +191,7 @@ public class IdempotencyMiddlewareTests
     }
 
     [Fact]
-    public async Task InvokeAsync_RedisFailure_FailsOpen()
+    public async Task InvokeAsync_RedisFailure_FailsClosed()
     {
         bool nextCalled = false;
         var middleware = CreateMiddleware(_ =>
@@ -205,11 +205,11 @@ public class IdempotencyMiddlewareTests
             CacheMiddlewareTestHelper.CreateUser(),
             new ThrowingIdempotencyStore());
 
-        Assert.True(nextCalled);
+        Assert.False(nextCalled);
     }
 
     [Fact]
-    public async Task InvokeAsync_StreamRoute_BypassesIdempotencyStore()
+    public async Task InvokeAsync_StreamRoute_RequiresIdempotencyStorage()
     {
         bool nextCalled = false;
         var middleware = CreateMiddleware(_ =>
@@ -224,7 +224,7 @@ public class IdempotencyMiddlewareTests
             CacheMiddlewareTestHelper.CreateUser(),
             new ThrowingIdempotencyStore());
 
-        Assert.True(nextCalled);
+        Assert.False(nextCalled);
     }
 
     [Fact]

@@ -8,4 +8,9 @@ internal enum ConversationAffinityState
 
 internal sealed record ConversationProviderAffinity(
     string ProviderId,
-    ConversationAffinityState State);
+    ConversationAffinityState State,
+    string? AgentId = null,
+    string? UserId = null,
+    int Version = 1,
+    DateTimeOffset? ExpiresAt = null,
+    bool Deleted = false);

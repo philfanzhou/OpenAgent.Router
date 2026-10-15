@@ -9,9 +9,10 @@ internal interface IConversationProviderResolver
         string conversationId,
         CancellationToken cancellationToken = default);
 
-    Task<ConversationProviderAffinity> BindPendingAsync(
+    Task<ConversationProviderAffinity> BindAsync(
         AgentProviderRequestContext requestContext,
         string conversationId,
         string providerId,
+        string agentId,
         CancellationToken cancellationToken = default);
 }

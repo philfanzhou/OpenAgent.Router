@@ -3,6 +3,7 @@ using OpenAgent.Contracts.Requests;
 using OpenAgent.Contracts.Security;
 using OpenAgent.Router.Hosting.Errors;
 using OpenAgent.Router.Observability;
+using OpenAgent.Router.Models;
 using Yarp.ReverseProxy.Forwarder;
 
 namespace OpenAgent.Router.Endpoints;
@@ -36,6 +37,53 @@ internal static class GatewayProxyHandler
             "chat",
             tenantId,
             conversationId);
+        IAgentProvider? conversationProvider = null;
+        Uri? conversationTarget = null;
+        if (context.Request.RouteValues.ContainsKey("conversationId")
+            && context.RequestServices.GetService<IAgentSelectionService>() is { } selectionService)
+        {
+            try
+            {
+                AgentSelection? selection = await selectionService.SelectAsync(string.Empty, conversationId,
+                    null, context.RequestAborted, context.Request.Headers.Authorization.FirstOrDefault())
+                    .ConfigureAwait(false);
+                var registry = context.RequestServices.GetRequiredService<IAgentProviderRegistry>();
+                if (selection == null || !registry.TryGet(selection.ProviderId, out conversationProvider)
+                    || conversationProvider == null) throw new AgentRoutingException(
+                        StatusCodes.Status503ServiceUnavailable, RouterErrorCodes.AgentProviderUnavailable,
+                        "Conversation Provider is unavailable");
+                AgentForwardingTarget? target = await conversationProvider.ResolveConversationForwardingAsync(
+                    $"{context.Request.Path}{context.Request.QueryString}", tenantId, conversationId!,
+                    context.RequestAborted).ConfigureAwait(false);
+                if (target == null) throw new AgentRoutingException(StatusCodes.Status501NotImplemented,
+                    RouterErrorCodes.AgentProviderUnavailable, "Provider does not support this conversation operation");
+                targetEndpoint = target.DestinationPrefix;
+                conversationTarget = target.RequestUri;
+                if (HttpMethods.IsDelete(context.Request.Method))
+                {
+                    var store = context.RequestServices.GetRequiredService<IConversationProviderStore>();
+                    ConversationProviderAffinity affinity = await context.RequestServices
+                        .GetRequiredService<IConversationProviderResolver>().ResolveAsync(
+                            new AgentProviderRequestContext(userContext), conversationId!, context.RequestAborted)
+                        .ConfigureAwait(false) ?? throw new AgentRoutingException(StatusCodes.Status404NotFound,
+                            RouterErrorCodes.ConversationNotFound, "Conversation was not found");
+                    // Tombstone before forwarding: a failed DELETE must never allow the ID to create a new conversation.
+                    await store.SetAsync(tenantId!, conversationId!, affinity with { Deleted = true },
+                        context.RequestAborted).WaitAsync(TimeSpan.FromSeconds(2), context.RequestAborted).ConfigureAwait(false);
+                }
+            }
+            catch (AgentRoutingException exception)
+            {
+                return TypedResults.Problem(RouterProblem.From(exception, context));
+            }
+            catch (Exception exception) when (!context.RequestAborted.IsCancellationRequested
+                && exception is StackExchange.Redis.RedisException or TimeoutException)
+            {
+                return TypedResults.Problem(RouterProblem.From(new AgentRoutingException(
+                    StatusCodes.Status503ServiceUnavailable, RouterErrorCodes.ConversationStorageUnavailable,
+                    "Conversation storage is unavailable"), context));
+            }
+        }
         if (string.IsNullOrWhiteSpace(targetEndpoint))
         {
             return TypedResults.Problem(AgentProblemDetails.Create(
@@ -48,7 +96,8 @@ internal static class GatewayProxyHandler
                 ("errorCode", (int)AgentErrorCode.DependencyUnavailable)));
         }
 
-        string targetUrl = $"{targetEndpoint.TrimEnd('/')}{context.Request.Path}{context.Request.QueryString}";
+        string targetUrl = conversationTarget?.ToString()
+            ?? $"{targetEndpoint.TrimEnd('/')}{context.Request.Path}{context.Request.QueryString}";
         string traceId = Activity.Current?.Id ?? context.TraceIdentifier;
         ForwarderError error;
         try

@@ -1,7 +1,7 @@
-using System.Collections.Concurrent;
 using System.Text.Json;
 using OpenAgent.Contracts.Security;
 using OpenAgent.Router.Observability;
+using OpenAgent.Router.Models;
 using StackExchange.Redis;
 
 namespace OpenAgent.Router.Security;
@@ -10,7 +10,6 @@ internal sealed class AgentVisibilityService : IAgentVisibilityService
 {
     private readonly ILogger<AgentVisibilityService> _logger;
     private readonly IConnectionMultiplexer? _redis;
-    private readonly ConcurrentDictionary<string, AgentAclEntry> _cache = new();
     private readonly AgentConfigAccessor _configAccessor;
 
     public AgentVisibilityService(
@@ -52,11 +51,6 @@ internal sealed class AgentVisibilityService : IAgentVisibilityService
 
     private async Task<AgentAclEntry?> GetAclEntryAsync(string agentId, CancellationToken cancellationToken)
     {
-        if (_cache.TryGetValue(agentId, out var cached))
-        {
-            return cached;
-        }
-
         string? aclJson = null;
 
         if (_redis != null)
@@ -64,22 +58,31 @@ internal sealed class AgentVisibilityService : IAgentVisibilityService
             try
             {
                 var db = _redis.GetDatabase();
-                var value = await db.StringGetAsync($"agent:acl:{agentId}");
+                var value = await db.StringGetAsync($"agent:acl:{agentId}")
+                    .WaitAsync(cancellationToken).ConfigureAwait(false);
                 aclJson = value.HasValue ? value.ToString() : null;
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
             {
                 RouterLog.ReadAclEntryFailed(_logger, ex, agentId);
+                throw new AgentRoutingException(
+                    StatusCodes.Status503ServiceUnavailable,
+                    RouterErrorCodes.AgentProviderUnavailable,
+                    "Agent authorization is unavailable");
             }
         }
 
         if (aclJson != null)
         {
-            var entry = JsonSerializer.Deserialize<AgentAclEntry>(aclJson);
-            if (entry != null)
+            try
             {
-                _cache[agentId] = entry;
-                return entry;
+                return JsonSerializer.Deserialize<AgentAclEntry>(aclJson)
+                    ?? throw new JsonException("Invalid Agent ACL");
+            }
+            catch (JsonException)
+            {
+                throw new AgentRoutingException(StatusCodes.Status503ServiceUnavailable,
+                    RouterErrorCodes.AgentProviderUnavailable, "Agent authorization is unavailable");
             }
         }
 

@@ -153,6 +153,7 @@ public class ChatEndpointHandlerTests
     private sealed class StubProvider(string id) : IAgentProvider
     {
         public string Id => id;
+        public bool SupportsRouterConversationIds => true;
 
         public Task<AgentProviderCatalog> GetAgentsAsync(
             AgentProviderRequestContext requestContext,

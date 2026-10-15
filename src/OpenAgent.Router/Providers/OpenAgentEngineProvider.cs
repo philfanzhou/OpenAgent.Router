@@ -57,6 +57,16 @@ internal sealed class OpenAgentEngineProvider : IAgentProvider, IDisposable
     }
 
     public string Id { get; }
+    public bool SupportsRouterConversationIds => true;
+
+    public Task<AgentForwardingTarget?> ResolveConversationForwardingAsync(
+        string pathAndQuery, string? tenantId, string conversationId, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        string? endpoint = _baseUrl ?? _routeTable.GetTargetEndpoint("chat", tenantId, conversationId);
+        return Task.FromResult(string.IsNullOrWhiteSpace(endpoint) ? null
+            : new AgentForwardingTarget(endpoint.TrimEnd('/'), new Uri($"{endpoint.TrimEnd('/')}{pathAndQuery}")));
+    }
 
     public async Task<AgentProviderCatalog> GetAgentsAsync(
         AgentProviderRequestContext requestContext,
@@ -105,7 +115,9 @@ internal sealed class OpenAgentEngineProvider : IAgentProvider, IDisposable
         IReadOnlyList<AgentSummary> agents = string.IsNullOrWhiteSpace(responseBody)
             ? []
             : JsonSerializer.Deserialize<List<AgentSummary>>(responseBody, JsonOptions) ?? [];
-        return new AgentProviderCatalog(agents);
+        return new AgentProviderCatalog(agents.Where(agent =>
+            agent.Status == (int)OpenAgent.Contracts.Models.AgentPublishStatus.Published
+            && string.Equals(agent.TenantId, requestContext.UserContext.TenantId, StringComparison.Ordinal)).ToArray());
     }
 
     public async Task<AgentProviderConversationStatus> ResolveConversationAsync(

@@ -1,0 +1,47 @@
+services:
+  router:
+    image: ${ROUTER_IMAGE:-openagent-router:local}
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${ROUTER_PORT:-5001}:5001"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__Redis: redis:6379,abortConnect=false
+      Authentication__Authority: ${AUTHORITY:?Set the JWT authority}
+      Authentication__Audience: ${AUDIENCE:?Set the JWT audience}
+      Authentication__ClientId: ${CLIENT_ID:?Set the authentication client ID}
+      RouterSettings__AgentProviders__Providers__0__Settings__BaseUrl: ${ENGINE_URL:?Set a reachable Engine URL}
+      RouterSettings__DecisionModel__Endpoint: ${DECISION_MODEL_ENDPOINT:?Set the complete Chat Completions URL}
+      RouterSettings__DecisionModel__ModelId: ${DECISION_MODEL_ID:?Set the routing model ID}
+      RouterSettings__DecisionModel__ApiKeyFile: /run/secrets/decision_model_api_key
+      RouterSettings__IntentRecognition__FallbackAgentId: ${FALLBACK_AGENT_ID:-default}
+    secrets:
+      - decision_model_api_key
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:5001/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    stop_grace_period: 60s
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory-policy", "noeviction"]
+    restart: unless-stopped
+    volumes:
+      - router_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+volumes:
+  router_redis:
+secrets:
+  decision_model_api_key:
+    file: ${DECISION_MODEL_API_KEY_FILE:?Set an API key file readable by the container user}

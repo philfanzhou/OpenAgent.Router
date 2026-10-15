@@ -1,5 +1,4 @@
 using Microsoft.Extensions.Options;
-using OpenAgent.Contracts.Configuration;
 using OpenAgent.Contracts.Security;
 using OpenAgent.Router.Models;
 using OpenAgent.Router.Options;
@@ -11,10 +10,9 @@ internal sealed class AgentSelectionService(
     IConversationProviderResolver conversations,
     IIntentAgentSelector intentAgentSelector,
     IAgentUserContext userContext,
-    IOptions<IntentRecognitionOptions> options) : IAgentSelectionService
+    IOptions<IntentRecognitionOptions> options,
+    ILogger<AgentSelectionService>? logger = null) : IAgentSelectionService
 {
-    private readonly IntentRecognitionOptions _options = options.Value;
-
     public async Task<AgentSelection?> SelectAsync(
         string message,
         string? conversationId,
@@ -25,161 +23,118 @@ internal sealed class AgentSelectionService(
     {
         if (string.IsNullOrWhiteSpace(userContext.TenantId))
         {
-            throw new AgentRoutingException(
-                StatusCodes.Status400BadRequest,
-                RouterErrorCodes.InvalidTenant,
-                "Tenant ID is required");
+            throw new AgentRoutingException(StatusCodes.Status400BadRequest,
+                RouterErrorCodes.InvalidTenant, "Tenant ID is required");
+        }
+        AgentProviderRequestContext requestContext = new(userContext, authenticationToken, llmProfileId);
+        if (!string.IsNullOrWhiteSpace(conversationId))
+        {
+            ConversationProviderAffinity affinity = await conversations.ResolveAsync(
+                requestContext, conversationId, cancellationToken).ConfigureAwait(false)
+                ?? throw new AgentRoutingException(StatusCodes.Status404NotFound,
+                    RouterErrorCodes.ConversationNotFound, "Conversation was not found");
+            if (!string.IsNullOrWhiteSpace(explicitAgentId) && !string.Equals(
+                explicitAgentId, affinity.AgentId, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new AgentRoutingException(StatusCodes.Status409Conflict,
+                    RouterErrorCodes.ConversationProviderMismatch, "Conversation Agent cannot be changed");
+            }
+            // Recheck availability and access; never reselect an Agent for an existing conversation.
+            AgentCatalogEntry entry = await ResolveAuthorizedAsync(requestContext, affinity.AgentId!,
+                cancellationToken, affinity.ProviderId).ConfigureAwait(false);
+            if (!string.Equals(entry.ProviderId, affinity.ProviderId, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new AgentRoutingException(StatusCodes.Status503ServiceUnavailable,
+                    RouterErrorCodes.AgentProviderUnavailable, "Conversation Agent is unavailable on its original Provider");
+            }
+            RouterMeter.RecordProviderSelection("conversation");
+            logger?.LogInformation("Agent route selected: {SelectionSource} {ProviderId} {AgentId}",
+                "conversation", affinity.ProviderId, entry.Agent.AgentId);
+            return new AgentSelection(entry.Agent.AgentId, affinity.ProviderId, conversationId);
         }
 
-        AgentProviderRequestContext requestContext = new(
-            userContext,
-            authenticationToken,
-            llmProfileId);
-        ConversationProviderAffinity? affinity = string.IsNullOrWhiteSpace(conversationId)
-            ? null
-            : await conversations.ResolveAsync(
-                requestContext,
-                conversationId,
-                cancellationToken).ConfigureAwait(false);
-
+        AgentCatalogEntry? selected;
+        string source;
         if (!string.IsNullOrWhiteSpace(explicitAgentId))
         {
-            AgentCatalogEntry entry = await catalog.ResolveAsync(
-                requestContext,
-                explicitAgentId,
+            selected = await ResolveAuthorizedAsync(requestContext, explicitAgentId,
                 cancellationToken).ConfigureAwait(false);
-            if (affinity != null
-                && !string.Equals(
-                    affinity.ProviderId,
-                    entry.ProviderId,
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                throw new AgentRoutingException(
-                    StatusCodes.Status409Conflict,
-                    RouterErrorCodes.ConversationProviderMismatch,
-                    "Agent does not belong to the Conversation Provider");
-            }
-
-            await EnsureConversationBindingAsync(
-                requestContext,
-                conversationId,
-                affinity,
-                entry.ProviderId,
-                cancellationToken).ConfigureAwait(false);
-            AgentSelection selection = new(entry.Agent.AgentId, entry.ProviderId);
-            RouterMeter.RecordProviderSelection("explicit");
-            return selection;
+            source = "explicit";
         }
-
-        if (affinity != null)
+        else
         {
-            AgentSelection selection = new(null, affinity.ProviderId);
-            RouterMeter.RecordProviderSelection("conversation");
-            return selection;
+            if (string.IsNullOrWhiteSpace(message))
+            {
+                throw new AgentRoutingException(StatusCodes.Status400BadRequest,
+                    RouterErrorCodes.InvalidRoutingRequest, "A message is required for automatic Agent selection");
+            }
+            IReadOnlyList<AgentCatalogEntry> entries = await GetCatalogAsync(requestContext,
+                cancellationToken).ConfigureAwait(false);
+            string? agentId = options.Value.Enabled
+                ? await intentAgentSelector.SelectAsync(requestContext, message,
+                    entries.Select(entry => entry.Agent).ToArray(), cancellationToken).ConfigureAwait(false)
+                : null;
+            selected = entries.FirstOrDefault(entry => string.Equals(
+                entry.Agent.AgentId, agentId, StringComparison.OrdinalIgnoreCase));
+            source = "model";
+            if (selected == null)
+            {
+                selected = entries.FirstOrDefault(entry => string.Equals(
+                    entry.Agent.AgentId, options.Value.FallbackAgentId, StringComparison.OrdinalIgnoreCase));
+                source = "fallback";
+            }
+        }
+        if (selected == null)
+        {
+            RouterMeter.RecordProviderSelection("unavailable");
+            return null;
         }
 
-        using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(
-            cancellationToken);
-        timeout.CancelAfter(TimeSpan.FromMilliseconds(_options.TimeoutMs));
+        string newConversationId = Guid.NewGuid().ToString();
+        ConversationProviderAffinity bound = await conversations.BindAsync(requestContext,
+            newConversationId, selected.ProviderId, selected.Agent.AgentId, cancellationToken).ConfigureAwait(false);
+        if (bound.ProviderId != selected.ProviderId || bound.AgentId != selected.Agent.AgentId
+            || bound.UserId != userContext.UserId)
+        {
+            throw new AgentRoutingException(StatusCodes.Status503ServiceUnavailable,
+                RouterErrorCodes.ConversationStorageUnavailable, "Conversation could not be created");
+        }
+        RouterMeter.RecordProviderSelection(source);
+        logger?.LogInformation("Agent route selected: {SelectionSource} {ProviderId} {AgentId}",
+            source, selected.ProviderId, selected.Agent.AgentId);
+        return new AgentSelection(selected.Agent.AgentId, selected.ProviderId, newConversationId);
+    }
+
+    private async Task<AgentCatalogEntry> ResolveAuthorizedAsync(AgentProviderRequestContext context,
+        string agentId, CancellationToken cancellationToken, string? providerId = null)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(options.Value.CatalogTimeoutMs);
         try
         {
-            IReadOnlyList<AgentCatalogEntry> entries = await catalog.GetAuthorizedAsync(
-                requestContext,
-                timeout.Token).ConfigureAwait(false);
-            (AgentCatalogEntry? Entry, string Source) selection = await SelectNewAsync(
-                requestContext,
-                message,
-                entries,
-                timeout.Token).ConfigureAwait(false);
-            if (selection.Entry == null)
-            {
-                RouterMeter.RecordProviderSelection("unavailable");
-                return null;
-            }
-
-            await EnsureConversationBindingAsync(
-                requestContext,
-                conversationId,
-                affinity,
-                selection.Entry.ProviderId,
-                cancellationToken).ConfigureAwait(false);
-            AgentSelection result = new(
-                selection.Entry.Agent.AgentId,
-                selection.Entry.ProviderId);
-            RouterMeter.RecordProviderSelection(selection.Source);
-            return result;
+            return await catalog.ResolveAsync(context, agentId, timeout.Token, providerId)
+                .WaitAsync(timeout.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new AgentRoutingException(
-                StatusCodes.Status503ServiceUnavailable,
-                RouterErrorCodes.AgentProviderUnavailable,
-                "Agent selection timed out");
+            throw new AgentRoutingException(StatusCodes.Status503ServiceUnavailable,
+                RouterErrorCodes.AgentProviderUnavailable, "Agent catalog timed out");
         }
     }
 
-    private async Task<(AgentCatalogEntry? Entry, string Source)> SelectNewAsync(
-        AgentProviderRequestContext requestContext,
-        string message,
-        IReadOnlyList<AgentCatalogEntry> entries,
+    private async Task<IReadOnlyList<AgentCatalogEntry>> GetCatalogAsync(AgentProviderRequestContext context,
         CancellationToken cancellationToken)
     {
-        AgentCatalogEntry[] candidates = entries
-            .Where(entry => !string.Equals(
-                entry.Agent.AgentId,
-                _options.AgentId,
-                StringComparison.OrdinalIgnoreCase))
-            .ToArray();
-        if (_options.Enabled)
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(options.Value.CatalogTimeoutMs);
+        try
         {
-            string? selectedAgentId = await intentAgentSelector.SelectAsync(
-                requestContext,
-                message,
-                candidates.Select(entry => entry.Agent).ToArray(),
-                cancellationToken).ConfigureAwait(false);
-            AgentCatalogEntry? selected = candidates.FirstOrDefault(entry =>
-                string.Equals(
-                    entry.Agent.AgentId,
-                    selectedAgentId,
-                    StringComparison.OrdinalIgnoreCase));
-            if (selected != null)
-            {
-                return (selected, "intent");
-            }
+            return await catalog.GetAuthorizedAsync(context, timeout.Token).WaitAsync(timeout.Token).ConfigureAwait(false);
         }
-
-        AgentCatalogEntry? fallback = string.IsNullOrWhiteSpace(_options.FallbackAgentId)
-            ? null
-            : candidates.FirstOrDefault(entry => string.Equals(
-                entry.Agent.AgentId,
-                _options.FallbackAgentId,
-                StringComparison.OrdinalIgnoreCase));
-        return (fallback, fallback == null ? "unavailable" : "fallback");
-    }
-
-    private async Task EnsureConversationBindingAsync(
-        AgentProviderRequestContext requestContext,
-        string? conversationId,
-        ConversationProviderAffinity? affinity,
-        string providerId,
-        CancellationToken cancellationToken)
-    {
-        if (string.IsNullOrWhiteSpace(conversationId) || affinity != null)
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return;
-        }
-
-        ConversationProviderAffinity bound = await conversations.BindPendingAsync(
-            requestContext,
-            conversationId,
-            providerId,
-            cancellationToken).ConfigureAwait(false);
-        if (!string.Equals(bound.ProviderId, providerId, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new AgentRoutingException(
-                StatusCodes.Status409Conflict,
-                RouterErrorCodes.ConversationProviderMismatch,
-                "Conversation was concurrently bound to another Provider");
+            throw new AgentRoutingException(StatusCodes.Status503ServiceUnavailable,
+                RouterErrorCodes.AgentProviderUnavailable, "Agent catalog timed out");
         }
     }
 }

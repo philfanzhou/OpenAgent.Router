@@ -3,6 +3,9 @@ using System.Text.Json;
 using OpenAgent.Contracts.Security;
 using OpenAgent.Router.Observability;
 using OpenAgent.Router.Options;
+using OpenAgent.Router.Endpoints;
+using OpenAgent.Router.Models;
+using OpenAgent.Router.Hosting.Errors;
 
 namespace OpenAgent.Router.Middleware;
 
@@ -18,7 +21,7 @@ internal sealed class IdempotencyMiddleware(
         IAgentUserContext userContext,
         IIdempotencyStore store)
     {
-        if (!userContext.IsAuthenticated || RouterCachePolicy.IsStreamingRequest(context.Request))
+        if (!userContext.IsAuthenticated)
         {
             await next(context).ConfigureAwait(false);
             return;
@@ -88,13 +91,28 @@ internal sealed class IdempotencyMiddleware(
                 RouterRequestMetadata.GetAction(context),
                 clientKey,
                 Activity.Current?.Id ?? context.TraceIdentifier);
-            await next(context).ConfigureAwait(false);
+            await WriteProblemAsync(context, StatusCodes.Status503ServiceUnavailable,
+                "Idempotency storage is unavailable.").ConfigureAwait(false);
             return;
         }
 
         if (acquisition.Status == IdempotencyAcquireStatus.Completed
             && acquisition.Response != null)
         {
+            if (acquisition.Response.RoutingHeaders?.TryGetValue("X-Conversation-Id", out string? id) == true
+                && context.RequestServices?.GetService<IAgentSelectionService>() is { } selectionService)
+            {
+                try
+                {
+                    await selectionService.SelectAsync(string.Empty, id, null, context.RequestAborted,
+                        context.Request.Headers.Authorization.FirstOrDefault()).ConfigureAwait(false);
+                }
+                catch (AgentRoutingException exception)
+                {
+                    await AgentProblemDetails.WriteAsync(context, RouterProblem.From(exception, context)).ConfigureAwait(false);
+                    return;
+                }
+            }
             RouterLog.IdempotencyCacheHit(
                 logger,
                 RouterRequestMetadata.GetAction(context),
@@ -122,6 +140,30 @@ internal sealed class IdempotencyMiddleware(
                 context,
                 StatusCodes.Status409Conflict,
                 detail).ConfigureAwait(false);
+            return;
+        }
+
+        if (RouterCachePolicy.IsStreamingRequest(context.Request))
+        {
+            context.Response.OnStarting(async () =>
+            {
+                if (!RouterCachePolicy.IsSuccessful(context.Response.StatusCode)) return;
+                byte[] body = JsonSerializer.SerializeToUtf8Bytes(new
+                {
+                    title = "Stream already started", status = 409,
+                    detail = "Use the returned conversation ID to continue; streams are not replayed."
+                });
+                bool completed = await store.CompleteAsync(storageKey, requestDigest, ownerToken,
+                    new CachedResponse(409, "application/problem+json", body, GetRoutingHeaders(context)),
+                    settings.IdempotencyTimeToLive, context.RequestAborted).ConfigureAwait(false);
+                if (!completed) throw new InvalidOperationException("Stream idempotency lease was lost");
+            });
+            try { await next(context).ConfigureAwait(false); }
+            finally
+            {
+                if (!context.Response.HasStarted || !RouterCachePolicy.IsSuccessful(context.Response.StatusCode))
+                    await ReleaseSafelyAsync(store, storageKey, requestDigest, ownerToken).ConfigureAwait(false);
+            }
             return;
         }
 
@@ -159,7 +201,7 @@ internal sealed class IdempotencyMiddleware(
                 new CachedResponse(
                     context.Response.StatusCode,
                     context.Response.ContentType,
-                    capture.GetCapturedBody()),
+                    capture.GetCapturedBody(), GetRoutingHeaders(context)),
                 settings.IdempotencyTimeToLive,
                 context.RequestAborted).ConfigureAwait(false);
         }
@@ -184,10 +226,17 @@ internal sealed class IdempotencyMiddleware(
         context.Response.StatusCode = response.StatusCode;
         context.Response.ContentType = response.ContentType;
         context.Response.ContentLength = response.Body.Length;
+        if (response.RoutingHeaders != null)
+            foreach (var header in response.RoutingHeaders) context.Response.Headers[header.Key] = header.Value;
         await context.Response.Body.WriteAsync(
             response.Body,
             context.RequestAborted).ConfigureAwait(false);
     }
+
+    private static Dictionary<string, string> GetRoutingHeaders(HttpContext context) =>
+        new[] { "X-Conversation-Id", "X-OpenAgent-Selected-Agent-Id" }
+            .Where(name => context.Response.Headers.ContainsKey(name))
+            .ToDictionary(name => name, name => context.Response.Headers[name].ToString());
 
     private static async Task WriteProblemAsync(
         HttpContext context,

@@ -208,8 +208,10 @@ internal static class RouterCacheKeyFactory
         string material = string.Join(
             '\n',
             snapshot.Digest,
-            request.Headers["X-Agent-Id"].FirstOrDefault() ?? string.Empty,
-            request.Headers["X-Conversation-Id"].FirstOrDefault() ?? string.Empty);
+            request.Headers["X-Agent-Id"].ToString(),
+            request.Headers["X-Conversation-Id"].ToString(),
+            request.Headers["X-Gina-Agent-Id"].ToString(),
+            request.Headers["X-Gina-Session-Id"].ToString());
         return Hash(material);
     }
 

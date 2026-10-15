@@ -15,4 +15,6 @@ internal static class RouterErrorCodes
     internal const string ConversationProviderMismatch = "conversation-provider-mismatch";
     internal const string InvalidTenant = "invalid-tenant";
     internal const string NoAgentAvailable = "no-agent-available";
+    internal const string InvalidRoutingRequest = "invalid-routing-request";
+    internal const string ConversationStorageUnavailable = "conversation-storage-unavailable";
 }

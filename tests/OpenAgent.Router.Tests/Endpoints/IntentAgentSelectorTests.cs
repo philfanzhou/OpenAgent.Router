@@ -1,3 +1,7 @@
+using System.Net;
+using System.Text.Json;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using OpenAgent.Contracts.Configuration;
 using OpenAgent.Contracts.Security;
 using OpenAgent.Router.Endpoints;
@@ -9,122 +13,108 @@ namespace OpenAgent.Router.Tests.Endpoints;
 
 public class IntentAgentSelectorTests
 {
-    private static readonly IReadOnlyList<AgentSummary> Candidates =
-    [
-        new AgentSummary
-        {
-            AgentId = "finance",
-            Name = "Finance",
-            Description = "Handles invoices"
-        }
-    ];
+    private static readonly AgentSummary[] Candidates =
+        [new() { AgentId = "finance", Name = "Finance", Description = "Handles invoices" }];
 
     [Theory]
     [InlineData("finance", 0.9, "finance")]
     [InlineData("FINANCE", 0.9, "finance")]
     [InlineData("unknown", 0.9, null)]
     [InlineData("finance", 0.1, null)]
-    public void ValidateResult_ProviderResult_ValidatesCandidateAndConfidence(
-        string agentId,
-        double confidence,
-        string? expected)
-    {
-        string? decision = IntentAgentSelector.ValidateResult(
-            new IntentRecognitionResult(agentId, confidence),
-            Candidates,
-            0.5);
+    [InlineData("finance", double.NaN, null)]
+    [InlineData("finance", double.PositiveInfinity, null)]
+    public void ValidateResult_OnlyAcceptsFiniteConfidenceAndCandidate(string id, double confidence, string? expected) =>
+        Assert.Equal(expected, IntentAgentSelector.ValidateResult(new(id, confidence), Candidates, 0.5));
 
-        Assert.Equal(expected, decision);
+    [Fact]
+    public async Task DedicatedModel_ReceivesPromptAndCandidatesWithoutCallerCredentialsOrProfile()
+    {
+        var handler = new Handler();
+        var selector = Create(handler);
+        string? result = await selector.SelectAsync(new AgentProviderRequestContext(
+            new AgentUserContext { UserId = "user", TenantId = "tenant" }, "Bearer caller-secret", "execution-profile"),
+            "find invoice", Candidates, CancellationToken.None);
+        Assert.Equal("finance", result);
+        Assert.Equal("Bearer routing-secret", handler.Authorization);
+        using var body = JsonDocument.Parse(handler.RequestBody!);
+        Assert.Equal("routing-model", body.RootElement.GetProperty("model").GetString());
+        string input = body.RootElement.GetProperty("messages")[1].GetProperty("content").GetString()!;
+        Assert.Contains("find invoice", input);
+        Assert.Contains("Handles invoices", input);
+        Assert.DoesNotContain("caller-secret", handler.RequestBody);
+        Assert.DoesNotContain("execution-profile", handler.RequestBody);
+    }
+
+    [Theory]
+    [InlineData("not json")]
+    [InlineData("{}")]
+    [InlineData("{\"agentId\":\"finance\"}")]
+    [InlineData("{\"agentId\":\"finance\",\"confidence\":null}")]
+    [InlineData("{\"agentId\":\"unknown\",\"confidence\":0.99}")]
+    [InlineData("{\"agentId\":\"finance\",\"confidence\":0.01}")]
+    public async Task InvalidDecision_ReturnsNoSelection(string content)
+    {
+        var selector = Create(new Handler { Content = content });
+        Assert.Null(await selector.SelectAsync(Context(), "invoice", Candidates, CancellationToken.None));
     }
 
     [Fact]
-    public async Task SelectAsync_InvokesConfiguredProviderAndAgent()
+    public async Task GatewayFailure_ReturnsNoSelection()
     {
-        var provider = new RecordingProvider();
-        var selector = new IntentAgentSelector(
-            new StubProviderRegistry(provider),
-            Microsoft.Extensions.Options.Options.Create(new IntentRecognitionOptions
+        var selector = Create(new Handler { Status = HttpStatusCode.TooManyRequests });
+        Assert.Null(await selector.SelectAsync(Context(), "invoice", Candidates, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Timeout_ReturnsNoSelectionButCallerCancellationPropagates()
+    {
+        var selector = Create(new Handler { Delay = true }, timeoutMs: 20);
+        Assert.Null(await selector.SelectAsync(Context(), "invoice", Candidates, CancellationToken.None));
+        using var canceled = new CancellationTokenSource();
+        canceled.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            selector.SelectAsync(Context(), "invoice", Candidates, canceled.Token));
+    }
+
+    [Fact]
+    public async Task OversizedResponse_ReturnsNoSelection()
+    {
+        var selector = Create(new Handler { Content = new string('x', 20000) });
+        Assert.Null(await selector.SelectAsync(Context(), "invoice", Candidates, CancellationToken.None));
+    }
+
+    private static AgentProviderRequestContext Context() => new(new AgentUserContext { UserId = "user", TenantId = "tenant" });
+    private static IntentAgentSelector Create(Handler handler, int timeoutMs = 1000) => new(
+        new ClientFactory(handler), Microsoft.Extensions.Options.Options.Create(new DecisionModelOptions
+        {
+            Endpoint = "http://model/v1/chat/completions", ModelId = "routing-model", ApiKey = "routing-secret"
+        }), Microsoft.Extensions.Options.Options.Create(new IntentRecognitionOptions { TimeoutMs = timeoutMs }),
+        NullLogger<IntentAgentSelector>.Instance);
+
+    private sealed class ClientFactory(Handler handler) : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => new(handler, disposeHandler: false);
+    }
+
+    private sealed class Handler : HttpMessageHandler
+    {
+        public string Content { get; init; } = "{\"agentId\":\"finance\",\"confidence\":0.95}";
+        public HttpStatusCode Status { get; init; } = HttpStatusCode.OK;
+        public bool Delay { get; init; }
+        public string? RequestBody { get; private set; }
+        public string? Authorization { get; private set; }
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
+        {
+            if (Delay) await Task.Delay(Timeout.Infinite, token);
+            RequestBody = await request.Content!.ReadAsStringAsync(token);
+            Authorization = request.Headers.Authorization?.ToString();
+            return new HttpResponseMessage(Status)
             {
-                ProviderId = "intent-provider",
-                AgentId = "intent-router",
-                MinimumConfidence = 0.5,
-                TimeoutMs = 5000
-            }));
-
-        string? decision = await selector.SelectAsync(
-            new AgentProviderRequestContext(
-                new AgentUserContext
+                Content = new StringContent(JsonSerializer.Serialize(new
                 {
-                    UserId = "user-1",
-                    TenantId = "tenant-1",
-                    IsAuthenticated = true
-                }),
-            "find my invoice",
-            Candidates,
-            CancellationToken.None);
-
-        Assert.Equal("finance", decision);
-        Assert.Equal("intent-router", provider.AgentId);
-        AgentSummary agent = Assert.Single(provider.Agents);
-        Assert.Equal("finance", agent.AgentId);
-        Assert.Equal("Handles invoices", agent.Description);
-        Assert.Equal("find my invoice", provider.Message);
-    }
-
-    private sealed class RecordingProvider : IAgentProvider
-    {
-        public string Id => "intent-provider";
-        public string? AgentId { get; private set; }
-        public IReadOnlyList<AgentSummary> Agents { get; private set; } = [];
-        public string Message { get; private set; } = string.Empty;
-
-        public Task<AgentProviderCatalog> GetAgentsAsync(
-            AgentProviderRequestContext requestContext,
-            CancellationToken cancellationToken) =>
-            Task.FromResult(new AgentProviderCatalog([]));
-
-        public Task<AgentProviderConversationStatus> ResolveConversationAsync(
-            AgentProviderRequestContext requestContext,
-            string conversationId,
-            CancellationToken cancellationToken) =>
-            Task.FromResult(AgentProviderConversationStatus.NotFound);
-
-        public Task<IntentRecognitionResult?> RecognizeIntentAsync(
-            AgentProviderRequestContext requestContext,
-            string intentAgentId,
-            IReadOnlyList<AgentSummary> agents,
-            string message,
-            CancellationToken cancellationToken)
-        {
-            AgentId = intentAgentId;
-            Agents = agents;
-            Message = message;
-            return Task.FromResult<IntentRecognitionResult?>(
-                new IntentRecognitionResult("finance", 0.95));
-        }
-
-        public Task<AgentForwardingTarget?> ResolveForwardingAsync(
-            string? action,
-            string? tenantId,
-            string? conversationId,
-            CancellationToken cancellationToken) =>
-            Task.FromResult<AgentForwardingTarget?>(null);
-
-        public ValueTask ConfigureRequestAsync(
-            HttpRequestMessage request,
-            AgentForwardingTarget target,
-            CancellationToken cancellationToken) => ValueTask.CompletedTask;
-    }
-
-    private sealed class StubProviderRegistry(IAgentProvider provider) : IAgentProviderRegistry
-    {
-        public IReadOnlyList<IAgentProvider> Providers => [provider];
-        public IAgentProvider DefaultProvider => provider;
-
-        public bool TryGet(string providerId, out IAgentProvider? result)
-        {
-            result = providerId == provider.Id ? provider : null;
-            return result != null;
+                    choices = new[] { new { finish_reason = "stop", message = new { content = Content } } }
+                }))
+            };
         }
     }
 }

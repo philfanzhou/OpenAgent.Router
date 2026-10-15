@@ -11,19 +11,28 @@ internal sealed class RouterReadyCheck : IHealthCheck
     private readonly IEngineReadinessProbe _probe;
     private readonly IEndpointHealthTracker _healthTracker;
     private readonly ILogger<RouterReadyCheck> _logger;
+    private readonly IAgentProviderRegistry? _providers;
+    private readonly IHostEnvironment? _environment;
+    private readonly DecisionModelStatus? _decisionModel;
 
     public RouterReadyCheck(
         IRouteTable routeTable,
         IEngineReadinessProbe probe,
         IEndpointHealthTracker healthTracker,
         ILogger<RouterReadyCheck> logger,
-        IConnectionMultiplexer? redis = null)
+        IConnectionMultiplexer? redis = null,
+        IAgentProviderRegistry? providers = null,
+        IHostEnvironment? environment = null,
+        DecisionModelStatus? decisionModel = null)
     {
         _redis = redis;
         _routeTable = routeTable;
         _probe = probe;
         _healthTracker = healthTracker;
         _logger = logger;
+        _providers = providers;
+        _environment = environment;
+        _decisionModel = decisionModel;
     }
 
     public async Task<HealthCheckResult> CheckHealthAsync(
@@ -33,6 +42,34 @@ internal sealed class RouterReadyCheck : IHealthCheck
         Dictionary<string, object> checks = [];
         bool redisDegraded = await CheckRedisAsync(checks, cancellationToken)
             .ConfigureAwait(false);
+        if (redisDegraded && _environment is { } environment && !environment.IsDevelopment())
+            return HealthCheckResult.Unhealthy("Router conversation storage is unavailable", data: checks);
+        if (_providers != null)
+        {
+            bool anyReady = false;
+            foreach (IAgentProvider provider in _providers.Providers.Where(provider => provider.SupportsRouterConversationIds))
+            {
+                for (int attempt = 0; attempt < 2; attempt++)
+                {
+                    var target = await provider.ResolveForwardingAsync(null, null, null, cancellationToken)
+                        .ConfigureAwait(false);
+                    if (target == null) break;
+                    if (await _probe.IsReadyAsync(target.DestinationPrefix, cancellationToken).ConfigureAwait(false))
+                    {
+                        _healthTracker.ReportSuccess(target.DestinationPrefix);
+                        anyReady = true;
+                        checks[provider.Id] = "Ready";
+                        break;
+                    }
+                    _healthTracker.ReportFailure(target.DestinationPrefix);
+                    checks[provider.Id] = "Unavailable";
+                }
+            }
+            return !anyReady ? HealthCheckResult.Unhealthy("Router has no serviceable downstream", data: checks)
+                : redisDegraded || checks.Values.Contains("Unavailable") || _decisionModel?.IsDegraded == true
+                    ? HealthCheckResult.Degraded("Router is serving through a degraded dependency path", data: checks)
+                    : HealthCheckResult.Healthy("Router is ready", data: checks);
+        }
         string? endpoint = _routeTable.GetTargetEndpoint("chat");
         if (string.IsNullOrWhiteSpace(endpoint))
         {

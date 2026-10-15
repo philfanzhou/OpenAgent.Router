@@ -108,6 +108,7 @@ public class AgentForwarderTests
     private sealed class RecordingProvider : IAgentProvider
     {
         public string Id => "partner";
+        public bool SupportsRouterConversationIds => true;
         public string? Action { get; private set; }
         public string? TenantId { get; private set; }
         public string? ConversationId { get; private set; }

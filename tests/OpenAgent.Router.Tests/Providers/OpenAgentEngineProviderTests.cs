@@ -123,7 +123,7 @@ public class OpenAgentEngineProviderTests
                 {
                     Content = JsonContent.Create(new[]
                     {
-                        new AgentSummary { AgentId = "finance" }
+                        new AgentSummary { AgentId = "finance", TenantId = "tenant-1", Status = 2 }
                     })
                 };
             }

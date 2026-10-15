@@ -23,7 +23,7 @@ public class AgentSelectionFilterTests
 
         Assert.Equal("finance", context.Request.Headers["X-Agent-Id"]);
         Assert.Equal("finance", context.Response.Headers["X-OpenAgent-Selected-Agent-Id"]);
-        Assert.Equal(0, context.Request.Body.Position);
+        Assert.Contains("find invoice", selectionService.Message);
         AgentRoutingFeature feature = Assert.IsType<AgentRoutingFeature>(
             context.Features.Get<AgentRoutingFeature>());
         Assert.Equal("partner", feature.ProviderId);
@@ -31,7 +31,7 @@ public class AgentSelectionFilterTests
     }
 
     [Fact]
-    public async Task InvokeAsync_BodyAgentId_OverwritesExistingHeader()
+    public async Task InvokeAsync_ConflictingBodyAndHeaderAgent_ReturnsBadRequest()
     {
         var selectionService = new StubSelectionService(
             new AgentSelection("support", "self-engine"));
@@ -40,12 +40,12 @@ public class AgentSelectionFilterTests
             "{\"message\":\"hello\",\"context\":{\"agentId\":\"support\"}}");
         context.Request.Headers["X-Agent-Id"] = "old-agent";
 
-        await filter.InvokeAsync(
+        object? result = await filter.InvokeAsync(
             new DefaultEndpointFilterInvocationContext(context),
             _ => ValueTask.FromResult<object?>(Results.Ok()));
 
-        Assert.Equal("support", selectionService.ExplicitAgentId);
-        Assert.Equal("support", context.Request.Headers["X-Agent-Id"]);
+        Assert.Equal(400, Assert.IsAssignableFrom<IStatusCodeHttpResult>(result).StatusCode);
+        Assert.Null(selectionService.Message);
     }
 
     [Fact]

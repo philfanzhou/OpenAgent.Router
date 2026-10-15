@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -13,108 +12,68 @@ internal sealed class ConversationProviderStore(
     IConnectionMultiplexer? redis = null) : IConversationProviderStore
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-    private readonly ConcurrentDictionary<string, ConversationProviderAffinity> _local =
-        new(StringComparer.Ordinal);
+    private readonly SemaphoreSlim _memoryGate = new(1, 1);
 
     public async Task<ConversationProviderAffinity?> GetAsync(
-        string tenantId,
-        string conversationId,
-        CancellationToken cancellationToken)
+        string tenantId, string conversationId, CancellationToken cancellationToken)
     {
         string key = BuildKey(tenantId, conversationId);
-        if (redis != null)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            RedisValue redisValue = await redis.GetDatabase()
-                .StringGetAsync(key).ConfigureAwait(false);
-            return redisValue.HasValue
-                ? JsonSerializer.Deserialize<ConversationProviderAffinity>(
-                    redisValue.ToString(),
-                    JsonOptions)
-                : null;
-        }
-
-        if (redis == null && _local.TryGetValue(key, out ConversationProviderAffinity? local))
-        {
-            return local;
-        }
-
-        string? value = await cache.GetStringAsync(
-            key,
-            cancellationToken).ConfigureAwait(false);
-        ConversationProviderAffinity? affinity = string.IsNullOrWhiteSpace(value)
-            ? null
+        string? value = redis != null
+            ? (string?)await redis.GetDatabase().StringGetAsync(key).WaitAsync(cancellationToken).ConfigureAwait(false)
+            : await cache.GetStringAsync(key, cancellationToken).ConfigureAwait(false);
+        return string.IsNullOrWhiteSpace(value) ? null
             : JsonSerializer.Deserialize<ConversationProviderAffinity>(value, JsonOptions);
-        if (affinity != null)
-        {
-            _local.TryAdd(key, affinity);
-        }
-
-        return affinity;
     }
 
-    public async Task SetAsync(
-        string tenantId,
-        string conversationId,
-        ConversationProviderAffinity affinity,
-        CancellationToken cancellationToken)
+    public async Task SetAsync(string tenantId, string conversationId,
+        ConversationProviderAffinity affinity, CancellationToken cancellationToken)
     {
         string key = BuildKey(tenantId, conversationId);
         string value = JsonSerializer.Serialize(affinity, JsonOptions);
+        TimeSpan ttl = GetTimeToLive(affinity);
         if (redis != null)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            await redis.GetDatabase().StringSetAsync(key, value).ConfigureAwait(false);
+            await redis.GetDatabase().StringSetAsync(key, value, ttl)
+                .WaitAsync(cancellationToken).ConfigureAwait(false);
             return;
         }
-
-        _local[key] = affinity;
-        await cache.SetStringAsync(
-            key,
-            value,
-            cancellationToken).ConfigureAwait(false);
+        await cache.SetStringAsync(key, value, new DistributedCacheEntryOptions
+        {
+            AbsoluteExpirationRelativeToNow = ttl
+        }, cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<ConversationProviderAffinity> BindAsync(
-        string tenantId,
-        string conversationId,
-        ConversationProviderAffinity affinity,
-        CancellationToken cancellationToken)
+    public async Task<ConversationProviderAffinity> BindAsync(string tenantId, string conversationId,
+        ConversationProviderAffinity affinity, CancellationToken cancellationToken)
     {
-        string key = BuildKey(tenantId, conversationId);
-        if (redis == null)
+        if (redis != null)
         {
-            ConversationProviderAffinity bound = _local.GetOrAdd(key, affinity);
-            if (ReferenceEquals(bound, affinity))
-            {
-                await cache.SetStringAsync(
-                    key,
-                    JsonSerializer.Serialize(bound, JsonOptions),
-                    cancellationToken).ConfigureAwait(false);
-            }
-
-            return bound;
+            string key = BuildKey(tenantId, conversationId);
+            bool created = await redis.GetDatabase().StringSetAsync(key,
+                JsonSerializer.Serialize(affinity, JsonOptions), GetTimeToLive(affinity), When.NotExists)
+                .WaitAsync(cancellationToken).ConfigureAwait(false);
+            return created ? affinity : await GetAsync(tenantId, conversationId, cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidOperationException("Conversation binding expired during creation");
         }
-
-        IDatabase database = redis.GetDatabase();
-        cancellationToken.ThrowIfCancellationRequested();
-        string value = JsonSerializer.Serialize(affinity, JsonOptions);
-        if (await database.StringSetAsync(key, value, when: When.NotExists)
-            .ConfigureAwait(false))
+        // Development only. Production requires Redis; this lock is not a distributed lock.
+        await _memoryGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
+            ConversationProviderAffinity? existing = await GetAsync(tenantId, conversationId,
+                cancellationToken).ConfigureAwait(false);
+            if (existing != null) return existing;
+            await SetAsync(tenantId, conversationId, affinity, cancellationToken).ConfigureAwait(false);
             return affinity;
         }
-
-        RedisValue existing = await database.StringGetAsync(key).ConfigureAwait(false);
-        return existing.HasValue
-            ? JsonSerializer.Deserialize<ConversationProviderAffinity>(existing.ToString(), JsonOptions)
-                ?? affinity
-            : affinity;
+        finally { _memoryGate.Release(); }
     }
 
-    private static string BuildKey(string tenantId, string conversationId)
+    private static TimeSpan GetTimeToLive(ConversationProviderAffinity affinity)
     {
-        byte[] input = Encoding.UTF8.GetBytes($"{tenantId}\0{conversationId}");
-        return $"openagent:router:conversation-provider:{Convert.ToHexString(SHA256.HashData(input))}";
+        TimeSpan remaining = (affinity.ExpiresAt ?? DateTimeOffset.UtcNow.AddDays(30)) - DateTimeOffset.UtcNow;
+        return remaining > TimeSpan.Zero ? remaining : TimeSpan.FromMilliseconds(1);
     }
+
+    private static string BuildKey(string tenantId, string conversationId) =>
+        $"openagent:router:conversation-provider:{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{tenantId}\0{conversationId}")))}";
 }

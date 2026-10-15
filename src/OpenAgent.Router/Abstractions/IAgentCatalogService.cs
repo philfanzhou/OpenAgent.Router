@@ -11,5 +11,6 @@ internal interface IAgentCatalogService
     Task<AgentCatalogEntry> ResolveAsync(
         AgentProviderRequestContext requestContext,
         string agentId,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        string? providerId = null);
 }
