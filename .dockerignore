@@ -1,0 +1,17 @@
+.git
+.agent
+.codex
+**/bin
+**/obj
+**/node_modules
+**/dist
+TestResults
+.env
+.env.*
+**/.env
+**/.env.*
+**/certs
+**/*.pem
+**/*.key
+**/*.pfx
+**/*.p12
