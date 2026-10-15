@@ -14,8 +14,10 @@ internal sealed record ParsedChatRequest(
 
 internal sealed record AgentRoutingFeature(
     string? ConversationId,
-    string ProviderId);
+    string ProviderId,
+    string? AgentId = null);
 
 internal sealed record AgentSelection(
     string? AgentId,
-    string ProviderId);
+    string ProviderId,
+    string? ConversationId = null);

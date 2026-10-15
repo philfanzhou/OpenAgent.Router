@@ -64,6 +64,7 @@ public class AgentCatalogServiceTests
         AgentProviderCatalog catalog) : IAgentProvider
     {
         public string Id => id;
+        public bool SupportsRouterConversationIds => true;
 
         public Task<AgentProviderCatalog> GetAgentsAsync(
             AgentProviderRequestContext requestContext,

@@ -7,6 +7,13 @@ public interface IAgentProvider
 {
     string Id { get; }
 
+    // Providers must explicitly opt into the caller-issued session-ID contract.
+    bool SupportsRouterConversationIds => false;
+
+    Task<AgentForwardingTarget?> ResolveConversationForwardingAsync(
+        string pathAndQuery, string? tenantId, string conversationId,
+        CancellationToken cancellationToken = default) => Task.FromResult<AgentForwardingTarget?>(null);
+
     Task<AgentProviderCatalog> GetAgentsAsync(
         AgentProviderRequestContext requestContext,
         CancellationToken cancellationToken = default);

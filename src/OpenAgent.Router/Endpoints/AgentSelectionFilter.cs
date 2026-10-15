@@ -34,15 +34,17 @@ internal sealed class AgentSelectionFilter(
                 "The request body must contain valid JSON.", context));
         }
 
-        string? routingConversationId = request.ConversationId
-            ?? context.Request.Headers["X-Conversation-Id"].FirstOrDefault();
-        string? explicitAgentId = string.IsNullOrWhiteSpace(request.AgentId)
-            ? context.Request.Headers["X-Agent-Id"].FirstOrDefault()
-                ?? context.Request.Headers["X-Gina-Agent-Id"].FirstOrDefault()
-            : request.AgentId;
+        string? routingConversationId;
         AgentSelection? selection;
         try
         {
+            routingConversationId = RoutingRequestNormalizer.Merge("conversationId", StringComparer.Ordinal,
+                new[] { request.ConversationId }
+                    .Concat(context.Request.Headers["X-Conversation-Id"])
+                    .Concat(context.Request.Headers["X-Gina-Session-Id"]));
+            string? explicitAgentId = RoutingRequestNormalizer.Merge("agentId", StringComparer.OrdinalIgnoreCase,
+                new[] { request.AgentId }.Concat(context.Request.Headers["X-Agent-Id"])
+                    .Concat(context.Request.Headers["X-Gina-Agent-Id"]));
             selection = await selectionService.SelectAsync(
                 request.Query,
                 routingConversationId,
@@ -64,14 +66,36 @@ internal sealed class AgentSelectionFilter(
         }
 
         context.Features.Set(new AgentRoutingFeature(
-            routingConversationId,
-            selection.ProviderId));
+            selection.ConversationId ?? routingConversationId,
+            selection.ProviderId,
+            selection.AgentId));
         if (!string.IsNullOrWhiteSpace(selection.AgentId))
         {
             context.Request.Headers["X-Agent-Id"] = selection.AgentId;
             context.Response.Headers["X-OpenAgent-Selected-Agent-Id"] = selection.AgentId;
         }
 
-        return await next(invocationContext).ConfigureAwait(false);
+        string? conversationId = selection.ConversationId ?? routingConversationId;
+        if (conversationId != null)
+        {
+            context.Request.Headers["X-Conversation-Id"] = conversationId;
+            context.Request.Headers.Remove("X-Gina-Session-Id");
+            context.Response.Headers["X-Conversation-Id"] = conversationId;
+        }
+        context.Response.OnStarting(() =>
+        {
+            if (conversationId != null) context.Response.Headers["X-Conversation-Id"] = conversationId;
+            if (selection.AgentId != null)
+                context.Response.Headers["X-OpenAgent-Selected-Agent-Id"] = selection.AgentId;
+            return Task.CompletedTask;
+        });
+        context.Request.Headers.Remove("X-Gina-Agent-Id");
+        Stream original = context.Request.Body;
+        await using Stream normalized = await RoutingRequestNormalizer.RewriteAsync(
+            context.Request, conversationId, selection.AgentId, context.RequestAborted).ConfigureAwait(false);
+        context.Request.Body = normalized;
+        context.Request.ContentLength = normalized.Length;
+        try { return await next(invocationContext).ConfigureAwait(false); }
+        finally { context.Request.Body = original; }
     }
 }

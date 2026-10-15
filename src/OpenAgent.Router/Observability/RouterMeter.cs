@@ -131,6 +131,7 @@ internal static class RouterMeter
         "explicit" => "explicit",
         "conversation" => "conversation",
         "intent" => "intent",
+        "model" => "model",
         "fallback" => "fallback",
         "unavailable" => "unavailable",
         _ => "other"

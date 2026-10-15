@@ -22,6 +22,7 @@ internal sealed class OpenAgentEngineProvider : IAgentProvider, IDisposable
     private readonly string _chatPath;
     private readonly string _conversationPath;
     private readonly string? _baseUrl;
+    private readonly string? _defaultLlmProfileId;
     private readonly IReadOnlyDictionary<string, string> _serviceHeaders;
     private readonly IRouteTable _routeTable;
     private readonly HttpMessageInvoker _httpClient;
@@ -36,6 +37,7 @@ internal sealed class OpenAgentEngineProvider : IAgentProvider, IDisposable
         bool allowInsecureTls = false)
     {
         Id = id;
+        _defaultLlmProfileId = settings["DefaultLlmProfileId"];
         _agentListPath = NormalizePath(settings["AgentListPath"], "/api/v1/agent/agents");
         _chatPath = NormalizePath(settings["ChatPath"], "/api/v1/agent/chat");
         _conversationPath = NormalizePath(
@@ -57,6 +59,16 @@ internal sealed class OpenAgentEngineProvider : IAgentProvider, IDisposable
     }
 
     public string Id { get; }
+    public bool SupportsRouterConversationIds => true;
+
+    public Task<AgentForwardingTarget?> ResolveConversationForwardingAsync(
+        string pathAndQuery, string? tenantId, string conversationId, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        string? endpoint = _baseUrl ?? _routeTable.GetTargetEndpoint("chat", tenantId, conversationId);
+        return Task.FromResult(string.IsNullOrWhiteSpace(endpoint) ? null
+            : new AgentForwardingTarget(endpoint.TrimEnd('/'), new Uri($"{endpoint.TrimEnd('/')}{pathAndQuery}")));
+    }
 
     public async Task<AgentProviderCatalog> GetAgentsAsync(
         AgentProviderRequestContext requestContext,
@@ -105,7 +117,9 @@ internal sealed class OpenAgentEngineProvider : IAgentProvider, IDisposable
         IReadOnlyList<AgentSummary> agents = string.IsNullOrWhiteSpace(responseBody)
             ? []
             : JsonSerializer.Deserialize<List<AgentSummary>>(responseBody, JsonOptions) ?? [];
-        return new AgentProviderCatalog(agents);
+        return new AgentProviderCatalog(agents.Where(agent =>
+            agent.Status == (int)OpenAgent.Contracts.Models.AgentPublishStatus.Published
+            && string.Equals(agent.TenantId, requestContext.UserContext.TenantId, StringComparison.Ordinal)).ToArray());
     }
 
     public async Task<AgentProviderConversationStatus> ResolveConversationAsync(
@@ -239,7 +253,8 @@ internal sealed class OpenAgentEngineProvider : IAgentProvider, IDisposable
             return Task.FromResult<AgentForwardingTarget?>(null);
         }
 
-        string actionSuffix = string.IsNullOrWhiteSpace(action) ? string.Empty : $"/{action}";
+        string? executionAction = string.Equals(action, "sse", StringComparison.OrdinalIgnoreCase) ? "stream" : action;
+        string actionSuffix = string.IsNullOrWhiteSpace(executionAction) ? string.Empty : $"/{executionAction}";
         string targetUrl = $"{endpoint.TrimEnd('/')}{_chatPath}{actionSuffix}";
         AgentForwardingTarget target = new(
             endpoint.TrimEnd('/'),
@@ -260,6 +275,11 @@ internal sealed class OpenAgentEngineProvider : IAgentProvider, IDisposable
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (!request.Headers.Contains("X-OpenAgent-Llm-Profile-Id")
+            && !string.IsNullOrWhiteSpace(_defaultLlmProfileId))
+        {
+            request.Headers.TryAddWithoutValidation("X-OpenAgent-Llm-Profile-Id", _defaultLlmProfileId);
+        }
         return ValueTask.CompletedTask;
     }
 

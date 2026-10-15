@@ -12,241 +12,126 @@ namespace OpenAgent.Router.Tests.Endpoints;
 public class AgentSelectionServiceTests
 {
     [Fact]
-    public async Task SelectAsync_ExplicitAgent_ResolvesAuthorizedProvider()
+    public async Task NewConversation_ModelSelectsProviderAndPersistsOwnerAndAgent()
     {
-        var engine = new StubProvider("self-engine", [Agent("general")]);
-        var partner = new StubProvider("partner", [Agent("finance")]);
-        AgentSelectionService service = CreateService([engine, partner]);
-
-        AgentSelection? selection = await service.SelectAsync(
-            "hello",
-            null,
-            "finance",
-            CancellationToken.None);
-
-        Assert.Equal("finance", selection?.AgentId);
-        Assert.Equal("partner", selection?.ProviderId);
-    }
-
-    [Fact]
-    public async Task SelectAsync_ExplicitUnauthorizedAgent_ReturnsNotFound()
-    {
-        var engine = new StubProvider("self-engine", [Agent("general"), Agent("finance")]);
-        AgentSelectionService service = CreateService(
-            [engine],
-            accessControls: [new AllowOnlyAccessControl("general")]);
-
-        AgentRoutingException exception = await Assert.ThrowsAsync<AgentRoutingException>(() =>
-            service.SelectAsync(
-                "hello",
-                null,
-                "finance",
-                CancellationToken.None));
-
-        Assert.Equal(StatusCodes.Status404NotFound, exception.StatusCode);
-        Assert.Equal(RouterErrorCodes.AgentNotFound, exception.Code);
-    }
-
-    [Fact]
-    public async Task SelectAsync_ExistingConversationOnPartner_BackfillsConfirmedAffinity()
-    {
-        var engine = new StubProvider("self-engine", [Agent("general")]);
-        var partner = new StubProvider("partner", [Agent("finance")]);
-        partner.Conversations["conversation-1"] = AgentProviderConversationStatus.Found;
         var store = new StubConversationProviderStore();
+        var selector = new StubSelector("finance");
+        var service = CreateService([new StubProvider("engine", [Agent("general")]),
+            new StubProvider("partner", [Agent("finance")])], selector, store);
+        AgentSelection? selection = await service.SelectAsync("invoice", null, null, CancellationToken.None);
+        Assert.NotNull(selection);
+        Assert.True(Guid.TryParse(selection.ConversationId, out _));
+        Assert.Equal("partner", selection.ProviderId);
+        var binding = await store.GetAsync("tenant-1", selection.ConversationId!);
+        Assert.Equal("finance", binding?.AgentId);
+        Assert.Equal("user-1", binding?.UserId);
+        Assert.Equal(1, selector.CallCount);
+    }
+
+    [Fact]
+    public async Task ExplicitAgent_SkipsModelAndCreatesConversation()
+    {
         var selector = new StubSelector("general");
-        AgentSelectionService service = CreateService([engine, partner], selector, store);
-
-        AgentSelection? selection = await service.SelectAsync(
-            "follow up",
-            "conversation-1",
-            null,
-            CancellationToken.None);
-
-        Assert.Null(selection?.AgentId);
-        Assert.Equal("partner", selection?.ProviderId);
-        ConversationProviderAffinity? affinity = await store.GetAsync(
-            "tenant-1",
-            "conversation-1");
-        Assert.NotNull(affinity);
-        Assert.Equal(ConversationAffinityState.Confirmed, affinity.State);
+        var service = CreateService([new StubProvider("engine", [Agent("general"), Agent("finance")])], selector);
+        var selected = await service.SelectAsync("invoice", null, "finance", CancellationToken.None);
+        Assert.Equal("finance", selected?.AgentId);
+        Assert.NotNull(selected?.ConversationId);
         Assert.Equal(0, selector.CallCount);
-        Assert.Equal("tenant-1", partner.LastTenantId);
     }
 
     [Fact]
-    public async Task SelectAsync_NewConversation_UsesSelectedProviderAndBindsPendingAffinity()
+    public async Task FollowUp_KeepsAgentDespiteDifferentPromptAndDoesNotInvokeModel()
     {
-        var engine = new StubProvider("self-engine", [Agent("general")]);
-        var partner = new StubProvider("partner", [Agent("finance")]);
+        var selector = new StubSelector("finance");
+        var service = CreateService([new StubProvider("engine", [Agent("general"), Agent("finance")])], selector);
+        var first = await service.SelectAsync("invoice", null, null, CancellationToken.None);
+        var next = await service.SelectAsync("write code instead", first!.ConversationId, null, CancellationToken.None);
+        Assert.Equal(first, next);
+        Assert.Equal(1, selector.CallCount);
+    }
+
+    [Fact]
+    public async Task UnknownConversation_IsRejectedWithoutModelOrProviderProbe()
+    {
+        var selector = new StubSelector("general");
+        var provider = new StubProvider("engine", [Agent("general")]);
+        provider.Conversations["legacy"] = AgentProviderConversationStatus.Found;
+        var service = CreateService([provider], selector);
+        var exception = await Assert.ThrowsAsync<AgentRoutingException>(() =>
+            service.SelectAsync("hello", "legacy", "general", CancellationToken.None));
+        Assert.Equal(404, exception.StatusCode);
+        Assert.Equal(0, selector.CallCount);
+        Assert.Null(provider.LastTenantId);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task FollowUp_ExplicitDifferentAgentIsConflictEvenOnSameProvider(bool sameProvider)
+    {
+        var service = CreateService(sameProvider
+            ? [new StubProvider("engine", [Agent("general"), Agent("finance")])]
+            : [new StubProvider("engine", [Agent("general")]), new StubProvider("partner", [Agent("finance")])]);
+        var first = await service.SelectAsync("hello", null, "general", CancellationToken.None);
+        var error = await Assert.ThrowsAsync<AgentRoutingException>(() => service.SelectAsync(
+            "change", first!.ConversationId, "finance", CancellationToken.None));
+        Assert.Equal(409, error.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("another-user", false)]
+    [InlineData("user-1", true)]
+    public async Task InaccessibleOrDeletedConversation_ReturnsNotFound(string owner, bool deleted)
+    {
         var store = new StubConversationProviderStore();
-        AgentSelectionService service = CreateService(
-            [engine, partner],
-            new StubSelector("finance"),
-            store);
-
-        AgentSelection? selection = await service.SelectAsync(
-            "find invoice",
-            "conversation-new",
-            null,
-            CancellationToken.None);
-
-        Assert.Equal("finance", selection?.AgentId);
-        Assert.Equal("partner", selection?.ProviderId);
-        ConversationProviderAffinity? affinity = await store.GetAsync(
-            "tenant-1",
-            "conversation-new");
-        Assert.NotNull(affinity);
-        Assert.Equal(ConversationAffinityState.Pending, affinity.State);
+        await store.SetAsync("tenant-1", "known", new ConversationProviderAffinity("engine",
+            ConversationAffinityState.Confirmed, "general", owner, Deleted: deleted));
+        var service = CreateService([new StubProvider("engine", [Agent("general")])], store: store);
+        var error = await Assert.ThrowsAsync<AgentRoutingException>(() =>
+            service.SelectAsync("hello", "known", null, CancellationToken.None));
+        Assert.Equal(404, error.StatusCode);
     }
 
     [Fact]
-    public async Task SelectAsync_ConfirmedConversationMigrated_UpdatesProviderAffinity()
+    public async Task NoDecision_UsesOnlyAuthorizedFallback()
     {
-        var engine = new StubProvider("self-engine", [Agent("general")]);
-        var partner = new StubProvider("partner", [Agent("finance")]);
-        partner.Conversations["conversation-1"] = AgentProviderConversationStatus.Found;
-        var store = new StubConversationProviderStore();
-        await store.SetAsync(
-            "tenant-1",
-            "conversation-1",
-            new ConversationProviderAffinity("self-engine", ConversationAffinityState.Confirmed));
-        AgentSelectionService service = CreateService([engine, partner], store: store);
-
-        AgentSelection? selection = await service.SelectAsync(
-            "follow up",
-            "conversation-1",
-            null,
-            CancellationToken.None);
-
-        Assert.Equal("partner", selection?.ProviderId);
-        Assert.Equal(
-            "partner",
-            (await store.GetAsync("tenant-1", "conversation-1"))?.ProviderId);
-    }
-
-    [Fact]
-    public async Task SelectAsync_ConversationAndExplicitAgentOnDifferentProviders_ReturnsConflict()
-    {
-        var engine = new StubProvider("self-engine", [Agent("general")]);
-        var partner = new StubProvider("partner", [Agent("finance")]);
-        partner.Conversations["conversation-1"] = AgentProviderConversationStatus.Found;
-        AgentSelectionService service = CreateService([engine, partner]);
-
-        AgentRoutingException exception = await Assert.ThrowsAsync<AgentRoutingException>(() =>
-            service.SelectAsync(
-                "follow up",
-                "conversation-1",
-                "general",
-                CancellationToken.None));
-
-        Assert.Equal(StatusCodes.Status409Conflict, exception.StatusCode);
-        Assert.Equal(RouterErrorCodes.ConversationProviderMismatch, exception.Code);
-    }
-
-    [Fact]
-    public async Task SelectAsync_ConflictingAgentIds_ReturnsConflict()
-    {
-        var engine = new StubProvider("self-engine", [Agent("support")]);
-        var partner = new StubProvider("partner", [Agent("support")]);
-        AgentSelectionService service = CreateService([engine, partner]);
-
-        AgentRoutingException exception = await Assert.ThrowsAsync<AgentRoutingException>(() =>
-            service.SelectAsync(
-                "hello",
-                null,
-                "support",
-                CancellationToken.None));
-
-        Assert.Equal(RouterErrorCodes.AgentIdConflict, exception.Code);
-    }
-
-    [Fact]
-    public async Task SelectAsync_ConflictingConversationOwners_ReturnsConflict()
-    {
-        var engine = new StubProvider("self-engine", [Agent("general")]);
-        var partner = new StubProvider("partner", [Agent("finance")]);
-        engine.Conversations["conversation-1"] = AgentProviderConversationStatus.Found;
-        partner.Conversations["conversation-1"] = AgentProviderConversationStatus.Found;
-        AgentSelectionService service = CreateService([engine, partner]);
-
-        AgentRoutingException exception = await Assert.ThrowsAsync<AgentRoutingException>(() =>
-            service.SelectAsync(
-                "follow up",
-                "conversation-1",
-                null,
-                CancellationToken.None));
-
-        Assert.Equal(StatusCodes.Status409Conflict, exception.StatusCode);
-        Assert.Equal(RouterErrorCodes.ConversationOwnerConflict, exception.Code);
-    }
-
-    [Fact]
-    public async Task SelectAsync_KnownProviderUnavailable_DoesNotChangeAffinity()
-    {
-        var engine = new StubProvider("self-engine", [Agent("general")])
-        {
-            DefaultConversationStatus = AgentProviderConversationStatus.Unavailable
-        };
-        var partner = new StubProvider("partner", [Agent("finance")]);
-        var store = new StubConversationProviderStore();
-        await store.SetAsync(
-            "tenant-1",
-            "conversation-1",
-            new ConversationProviderAffinity("self-engine", ConversationAffinityState.Confirmed));
-        AgentSelectionService service = CreateService([engine, partner], store: store);
-
-        AgentRoutingException exception = await Assert.ThrowsAsync<AgentRoutingException>(() =>
-            service.SelectAsync(
-                "follow up",
-                "conversation-1",
-                null,
-                CancellationToken.None));
-
-        Assert.Equal(RouterErrorCodes.AgentProviderUnavailable, exception.Code);
-        Assert.Equal(
-            "self-engine",
-            (await store.GetAsync("tenant-1", "conversation-1"))?.ProviderId);
-    }
-
-    [Fact]
-    public async Task SelectAsync_IntentHasNoDecision_UsesFallbackAgentProvider()
-    {
-        var engine = new StubProvider("self-engine", []);
-        var partner = new StubProvider("partner", [Agent("general")]);
-        AgentSelectionService service = CreateService(
-            [engine, partner],
+        var service = CreateService([new StubProvider("engine", [Agent("general"), Agent("finance")])],
             new StubSelector(null));
-
-        AgentSelection? selection = await service.SelectAsync(
-            "hello",
-            null,
-            null,
-            CancellationToken.None);
-
-        Assert.Equal("general", selection?.AgentId);
-        Assert.Equal("partner", selection?.ProviderId);
+        Assert.Equal("general", (await service.SelectAsync("hi", null, null, CancellationToken.None))?.AgentId);
+        var restricted = CreateService([new StubProvider("engine", [Agent("general"), Agent("finance")])],
+            new StubSelector(null), accessControls: [new AllowOnlyAccessControl("finance")]);
+        Assert.Null(await restricted.SelectAsync("hi", null, null, CancellationToken.None));
     }
 
     [Fact]
-    public async Task SelectAsync_UnboundConversationWithUnavailableProvider_DoesNotFallback()
+    public async Task ExplicitUnauthorizedAgent_ReturnsNotFound()
     {
-        var engine = new StubProvider("self-engine", [Agent("general")]);
-        var partner = new StubProvider("partner", [Agent("finance")])
-        {
-            DefaultConversationStatus = AgentProviderConversationStatus.Unavailable
-        };
-        AgentSelectionService service = CreateService([engine, partner]);
+        var service = CreateService([new StubProvider("engine", [Agent("general"), Agent("finance")])],
+            accessControls: [new AllowOnlyAccessControl("general")]);
+        var error = await Assert.ThrowsAsync<AgentRoutingException>(() =>
+            service.SelectAsync("hello", null, "finance", CancellationToken.None));
+        Assert.Equal(404, error.StatusCode);
+    }
 
-        AgentRoutingException exception = await Assert.ThrowsAsync<AgentRoutingException>(() =>
-            service.SelectAsync(
-                "follow up",
-                "conversation-1",
-                null,
-                CancellationToken.None));
+    [Fact]
+    public async Task DuplicateAgentIds_ReturnConflict()
+    {
+        var service = CreateService([new StubProvider("one", [Agent("general")]),
+            new StubProvider("two", [Agent("general")])]);
+        var error = await Assert.ThrowsAsync<AgentRoutingException>(() =>
+            service.SelectAsync("hello", null, null, CancellationToken.None));
+        Assert.Equal(409, error.StatusCode);
+    }
 
-        Assert.Equal(StatusCodes.Status503ServiceUnavailable, exception.StatusCode);
-        Assert.Equal(RouterErrorCodes.ConversationOwnerUnresolved, exception.Code);
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task AutomaticSelection_RequiresPrompt(string message)
+    {
+        var service = CreateService([new StubProvider("engine", [Agent("general")])]);
+        var error = await Assert.ThrowsAsync<AgentRoutingException>(() =>
+            service.SelectAsync(message, null, null, CancellationToken.None));
+        Assert.Equal(400, error.StatusCode);
     }
 
     private static AgentSelectionService CreateService(
@@ -259,7 +144,8 @@ public class AgentSelectionServiceTests
         var affinityStore = store ?? new StubConversationProviderStore();
         return new AgentSelectionService(
             new AgentCatalogService(registry, accessControls ?? []),
-            new ConversationProviderResolver(registry, affinityStore),
+            new ConversationProviderResolver(registry, affinityStore,
+                Microsoft.Extensions.Options.Options.Create(new ConversationRoutingOptions())),
             selector ?? new StubSelector("general"),
             new AgentUserContext
             {
@@ -285,6 +171,7 @@ public class AgentSelectionServiceTests
         IReadOnlyList<AgentSummary> agents) : IAgentProvider
     {
         public string Id => id;
+        public bool SupportsRouterConversationIds => true;
 
         public Dictionary<string, AgentProviderConversationStatus> Conversations { get; } =
             new(StringComparer.OrdinalIgnoreCase);

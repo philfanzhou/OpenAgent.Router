@@ -9,6 +9,23 @@ namespace OpenAgent.Router.Tests.Extensions;
 
 public class RouterServiceCollectionExtensionsTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void DedicatedModelConfiguration_IsRequiredOnlyWhenEnabled(bool enabled)
+    {
+        var settings = CreateValidSettings();
+        settings["RouterSettings:IntentRecognition:Enabled"] = enabled.ToString();
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddRouterRuntime(configuration);
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<IOptions<DecisionModelOptions>>();
+        if (enabled) Assert.Throws<OptionsValidationException>(() => options.Value);
+        else Assert.NotNull(options.Value);
+    }
+
     [Fact]
     public void AddRouterRuntime_ValidProviderConfiguration_BindsProviderAndIntentOptions()
     {

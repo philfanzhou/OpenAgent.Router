@@ -1,5 +1,7 @@
 # Router 服务发现、限流与就绪
 
+独立 Docker 部署与新会话选 Agent 的需求和已确认方案，见[需求与设计](router-deployment-and-agent-selection.md)；实际配置、请求协议与部署步骤见[部署文档](deployment.md)。
+
 Router 使用 Redis Engine 注册索引发现动态实例，并以静态 `RouterSettings:Routing` 作为明确的回退路径。实现位于 `src/OpenAgent.Router/`；Engine 注册协议见主仓库 OpenAgent 的 `docs/modules/engine/runtime/service-registration/`。
 
 ## 服务发现
@@ -27,11 +29,11 @@ Router 使用 Redis Engine 注册索引发现动态实例，并以静态 `Router
 
 ## Provider 请求日志
 
-Router 会在 `Information` 级别记录 Provider 的请求方法、目标 URI、请求头，以及下游响应状态码和响应头；YARP 转发会记录经过 Router 和 Provider 映射后的最终请求头。意图识别还会记录 Provider、意图 Agent、候选数量和最终选择结果，Gina 会记录确定性 Agent 选择结果。
+Router 会在 `Information` 级别记录 Provider 的请求方法、目标 URI、请求头，以及下游响应状态码和响应头；YARP 转发会记录经过 Router 和 Provider 映射后的最终请求头。选路日志记录来源、Provider 与最终 Agent；独立决策模型客户端不记录 prompt、密钥或模型响应体。
 
 请求/响应体只在 `Debug` 级别记录，并限制长度。`Authorization`、`Cookie`、`Set-Cookie`、API Key、Token、Secret、Password 等敏感 Header 的值会脱敏为 `[REDACTED]`。
 
-生产环境如需查看意图识别请求体，可仅将 Router 调整为 Debug：
+排查 Provider 请求时，可仅将 Router 调整为 Debug（此设置不启用独立决策模型的请求体日志）：
 
 ```json
 {

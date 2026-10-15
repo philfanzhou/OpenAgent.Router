@@ -18,6 +18,7 @@ internal sealed class GinaProvider : IAgentProvider, IDisposable
     private readonly string? _defaultAgentId;
     private readonly string? _baseUrl;
     private readonly string? _serverToken;
+    private readonly bool _supportsRouterConversationIds;
     private readonly IReadOnlyDictionary<string, string> _serviceHeaders;
     private readonly HttpMessageInvoker _httpClient;
     private readonly ILogger<GinaProvider> _logger;
@@ -30,6 +31,7 @@ internal sealed class GinaProvider : IAgentProvider, IDisposable
         bool allowInsecureTls = false)
     {
         Id = id;
+        _supportsRouterConversationIds = settings.GetValue<bool>("SupportsRouterConversationIds");
         _agentListPath = NormalizePath(settings["AgentListPath"], "/api/agentlist");
         _chatPath = NormalizePath(settings["ChatPath"], "/api/chat");
         _defaultAgentId = FirstNonEmpty(settings["DefaultAgentId"]);
@@ -49,6 +51,7 @@ internal sealed class GinaProvider : IAgentProvider, IDisposable
     }
 
     public string Id { get; }
+    public bool SupportsRouterConversationIds => _supportsRouterConversationIds;
 
     public async Task<AgentProviderCatalog> GetAgentsAsync(
         AgentProviderRequestContext requestContext,
@@ -179,7 +182,7 @@ internal sealed class GinaProvider : IAgentProvider, IDisposable
             ReplaceHeader(request, "X-Gina-Agent-Id", agentId);
         }
 
-        if (string.IsNullOrWhiteSpace(GetHeader(request, "X-Gina-Session-Id")))
+        if (!string.IsNullOrWhiteSpace(GetHeader(request, "X-Conversation-Id")))
         {
             string? conversationId = GetHeader(request, "X-Conversation-Id");
             if (!string.IsNullOrWhiteSpace(conversationId))
