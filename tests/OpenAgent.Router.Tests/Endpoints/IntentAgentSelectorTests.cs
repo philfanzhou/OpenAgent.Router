@@ -91,13 +91,58 @@ public class IntentAgentSelectorTests
         Assert.Null(await selector.SelectAsync(Context(), "invoice", Candidates, CancellationToken.None));
     }
 
+    [Fact]
+    public async Task ConsecutiveFailures_OpenBreakerAndSkipModel_ThenProbeAfterCooldown()
+    {
+        var time = new Clock(DateTimeOffset.UtcNow);
+        var status = new DecisionModelStatus(time);
+        var handler = new Handler { Status = HttpStatusCode.BadGateway };
+        var selector = Create(handler, status: status);
+        for (int i = 0; i < DecisionModelStatus.BreakerThreshold; i++)
+            await selector.SelectAsync(Context(), "invoice", Candidates, CancellationToken.None);
+        Assert.True(status.IsBreakerOpen);
+
+        handler.RequestBody = null;
+        Assert.Null(await selector.SelectAsync(Context(), "invoice", Candidates, CancellationToken.None));
+        Assert.Null(handler.RequestBody);
+
+        time.Now += DecisionModelStatus.BreakerOpenDuration + TimeSpan.FromSeconds(1);
+        Assert.False(status.IsBreakerOpen);
+        await selector.SelectAsync(Context(), "invoice", Candidates, CancellationToken.None);
+        Assert.True(status.IsBreakerOpen);
+    }
+
+    [Fact]
+    public async Task ApiKeyFile_IsReadOncePerCacheWindow()
+    {
+        string file = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllText(file, "key-1");
+            var handler = new Handler();
+            var selector = Create(handler, keyFile: file);
+            await selector.SelectAsync(Context(), "invoice", Candidates, CancellationToken.None);
+            File.WriteAllText(file, "key-2");
+            await selector.SelectAsync(Context(), "invoice", Candidates, CancellationToken.None);
+            Assert.Equal("Bearer key-1", handler.Authorization);
+        }
+        finally { File.Delete(file); }
+    }
+
+    private sealed class Clock(DateTimeOffset now) : TimeProvider
+    {
+        public DateTimeOffset Now { get; set; } = now;
+        public override DateTimeOffset GetUtcNow() => Now;
+    }
+
     private static AgentProviderRequestContext Context() => new(new AgentUserContext { UserId = "user", TenantId = "tenant" });
-    private static IntentAgentSelector Create(Handler handler, int timeoutMs = 1000) => new(
+    private static IntentAgentSelector Create(
+        Handler handler, int timeoutMs = 1000, DecisionModelStatus? status = null, string keyFile = "") => new(
         new ClientFactory(handler), Microsoft.Extensions.Options.Options.Create(new DecisionModelOptions
         {
-            Endpoint = "http://model/v1/decisions", ApiKey = "routing-secret"
+            Endpoint = "http://model/v1/decisions", ApiKey = "routing-secret", ApiKeyFile = keyFile
         }), Microsoft.Extensions.Options.Options.Create(new IntentRecognitionOptions { TimeoutMs = timeoutMs }),
-        NullLogger<IntentAgentSelector>.Instance);
+        NullLogger<IntentAgentSelector>.Instance, status);
 
     private sealed class ClientFactory(Handler handler) : IHttpClientFactory
     {
@@ -109,7 +154,7 @@ public class IntentAgentSelectorTests
         public string Content { get; init; } = "{\"answers\":{\"agent\":{\"choice\":\"finance\",\"confidence\":0.95}}}";
         public HttpStatusCode Status { get; init; } = HttpStatusCode.OK;
         public bool Delay { get; init; }
-        public string? RequestBody { get; private set; }
+        public string? RequestBody { get; set; }
         public string? Authorization { get; private set; }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
         {
