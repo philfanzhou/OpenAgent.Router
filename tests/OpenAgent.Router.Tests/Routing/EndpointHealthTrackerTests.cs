@@ -24,6 +24,19 @@ public class EndpointHealthTrackerTests
         Assert.True(tracker.IsAvailable("http://engine"));
     }
 
+    [Fact]
+    public void ReportFailure_AfterWindowExpired_DoesNotAccumulateStaleFailures()
+    {
+        MutableTimeProvider timeProvider = new(DateTimeOffset.UtcNow);
+        EndpointHealthTracker tracker = new(2, TimeSpan.FromSeconds(30), timeProvider);
+
+        tracker.ReportFailure("http://engine");
+        timeProvider.Advance(TimeSpan.FromMinutes(10));
+        tracker.ReportFailure("http://engine");
+
+        Assert.True(tracker.IsAvailable("http://engine"));
+    }
+
     private sealed class MutableTimeProvider(DateTimeOffset utcNow) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => utcNow;

@@ -11,7 +11,7 @@ internal sealed class EndpointHealthTracker : IEndpointHealthTracker
 
     public EndpointHealthTracker(IConfiguration configuration)
         : this(
-            Math.Max(configuration.GetValue("RouterSettings:ServiceDiscovery:FailureThreshold", 1), 1),
+            Math.Max(configuration.GetValue("RouterSettings:ServiceDiscovery:FailureThreshold", 2), 1),
             TimeSpan.FromSeconds(Math.Max(
                 configuration.GetValue("RouterSettings:ServiceDiscovery:FailureQuarantineSeconds", 30), 1)),
             TimeProvider.System)
@@ -60,7 +60,10 @@ internal sealed class EndpointHealthTracker : IEndpointHealthTracker
         _failures.AddOrUpdate(
             endpoint,
             _ => new FailureState(1, now + _quarantineDuration),
-            (_, current) => new FailureState(current.Failures + 1, now + _quarantineDuration));
+            // 上次失败已过隔离窗口则重新计数，避免陈旧失败与新失败累加后误隔离。
+            (_, current) => new FailureState(
+                current.QuarantinedUntil <= now ? 1 : current.Failures + 1,
+                now + _quarantineDuration));
     }
 
     private sealed record FailureState(int Failures, DateTimeOffset QuarantinedUntil);
