@@ -94,6 +94,30 @@ public sealed class RouterHostIntegrationTests : IClassFixture<RouterHostFixture
         Assert.Equal(before + 1, _fixture.PrimaryEngine.DecisionCount);
     }
 
+    [Theory]
+    [InlineData("ok")]
+    [InlineData("好的，继续")]
+    public async Task AcknowledgementWithoutSession_SkipsModelAndFollowsSessionOtherwise(string message)
+    {
+        using var factory = _fixture.CreateFactory(settings: ModelSettings());
+        using var client = factory.CreateClient();
+        int before = _fixture.PrimaryEngine.DecisionCount;
+
+        // The stub model always answers "finance"; the fallback is "default".
+        using var alone = await client.SendAsync(CreateChatRequest(message, model: "auto"));
+        Assert.Equal("default", alone.Headers.GetValues("X-OpenAgent-Selected-Agent-Id").Single());
+        Assert.Equal(before, _fixture.PrimaryEngine.DecisionCount);
+
+        using var first = await client.SendAsync(CreateChatRequest("find my invoice", model: "auto"));
+        using var followUp = CreateChatRequest(message, model: "auto");
+        followUp.Headers.Add("X-Session-Id", first.Headers.GetValues("X-Session-Id").Single());
+        using var next = await client.SendAsync(followUp);
+
+        Assert.Equal("finance", next.Headers.GetValues("X-OpenAgent-Selected-Agent-Id").Single());
+        Assert.Equal(first.Headers.GetValues("X-Session-Id").Single(), next.Headers.GetValues("X-Session-Id").Single());
+        Assert.Equal(before + 1, _fixture.PrimaryEngine.DecisionCount);
+    }
+
     [Fact]
     public async Task ChatCompletions_ContinuationWithoutHeaderKeepsSessionByFirstMessage()
     {

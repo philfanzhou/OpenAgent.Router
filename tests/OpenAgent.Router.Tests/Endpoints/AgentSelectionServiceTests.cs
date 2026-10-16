@@ -102,6 +102,33 @@ public class AgentSelectionServiceTests
         Assert.Null(await restricted.SelectAsync("hi", null, null, CancellationToken.None));
     }
 
+    [Theory]
+    [InlineData("ok")]
+    [InlineData("好的，继续")]
+    public async Task TrivialMessage_WithoutSession_SkipsModelAndUsesFallback(string message)
+    {
+        var selector = new StubSelector("finance");
+        var service = CreateService([new StubProvider("engine", [Agent("general"), Agent("finance")])], selector);
+
+        var selection = await service.SelectAsync(message, null, null, CancellationToken.None);
+
+        Assert.Equal("general", selection?.AgentId);
+        Assert.Equal(0, selector.CallCount);
+    }
+
+    [Fact]
+    public async Task TrivialMessage_WithSession_KeepsTheSessionAgentWithoutModel()
+    {
+        var selector = new StubSelector("finance");
+        var service = CreateService([new StubProvider("engine", [Agent("general"), Agent("finance")])], selector);
+        var first = await service.SelectAsync("find my invoice", null, null, CancellationToken.None);
+
+        var next = await service.SelectAsync("好的，继续", first!.ConversationId, null, CancellationToken.None);
+
+        Assert.Equal(first, next);
+        Assert.Equal(1, selector.CallCount);
+    }
+
     [Fact]
     public async Task ExplicitUnauthorizedAgent_ReturnsNotFound()
     {
