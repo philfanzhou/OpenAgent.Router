@@ -27,6 +27,27 @@ jobs:
       - run: docker build --tag openagent-router:ci .
       - name: Verify production container and probes
         run: python3 tests/container_smoke.py openagent-router:ci
+  contracts-drift:
+    # 需要仓库 secret OPENAGENT_REPO_TOKEN（对 philfanzhou/OpenAgent 有只读权限）；未配置时跳过。
+    runs-on: ubuntu-latest
+    env:
+      OPENAGENT_REPO_TOKEN: ${{ secrets.OPENAGENT_REPO_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Skip when token is not configured
+        if: env.OPENAGENT_REPO_TOKEN == ''
+        run: echo "::warning::OPENAGENT_REPO_TOKEN not set; Contracts drift check skipped"
+      - uses: actions/checkout@v4
+        if: env.OPENAGENT_REPO_TOKEN != ''
+        with:
+          repository: philfanzhou/OpenAgent
+          ref: dev
+          token: ${{ env.OPENAGENT_REPO_TOKEN }}
+          path: upstream
+          sparse-checkout: Backend/src/OpenAgent.Contracts
+      - name: Compare Contracts snapshot
+        if: env.OPENAGENT_REPO_TOKEN != ''
+        run: tools/check-contracts-drift.sh upstream/Backend/src/OpenAgent.Contracts
   publish:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: verify

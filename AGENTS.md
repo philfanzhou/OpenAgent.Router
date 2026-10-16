@@ -14,7 +14,7 @@ docs/router.md             配置与行为说明
 - Router 不引用 Engine 项目，只通过 HTTP 与 Engine/第三方 Provider 通信。
 - Router 无状态：会话亲和、限流、幂等、实例注册都在 Redis。
 - 已有会话只查亲和表，不做再次选择；新会话才走选择器（后续接入 jev，失败回落默认 agent）。
-- `Contracts` 与 `Hosting/` 是拷贝，与 OpenAgent 主仓库的对应代码需人工保持契约一致。
+- `Contracts` 与 `Hosting/` 是拷贝，与 OpenAgent 主仓库的对应代码需人工保持契约一致；Contracts 另有 `tools/check-contracts-drift.sh <主仓库 Contracts 目录>` 与 CI `contracts-drift` 作业校验（需 secret `OPENAGENT_REPO_TOKEN`）。
 
 ## 命令
 
