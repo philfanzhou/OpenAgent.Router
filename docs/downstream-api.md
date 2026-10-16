@@ -1,5 +1,7 @@
 # 下游业务系统接入接口
 
+> **待废止**：本文描述的自有聊天协议将被标准 OpenAI / Anthropic 接口取代，新设计确认后重写。
+
 Router 对下游只有一种协议：`OpenAgentEngine`。下游业务系统按本文实现这些接口，Router 不为单个下游增加专用适配器。联调时可用 `tools/mock-business-api.cs` 作参照实现（`dotnet run tools/mock-business-api.cs`，监听 `http://localhost:5290`）。
 
 ## 1. 接入配置
