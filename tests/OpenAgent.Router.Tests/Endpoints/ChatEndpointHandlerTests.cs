@@ -1,7 +1,8 @@
+using System.Text;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
-using OpenAgent.Contracts.Configuration;
 using OpenAgent.Contracts.Security;
 using OpenAgent.Router.Endpoints;
 using OpenAgent.Router.Models;
@@ -11,17 +12,16 @@ namespace OpenAgent.Router.Tests.Endpoints;
 
 public class ChatEndpointHandlerTests
 {
-    [Fact]
-    public async Task HandleAsync_AnonymousRequest_ReturnsUnauthorized()
-    {
-        DefaultHttpContext context = CreateContext();
-        var forwarder = new RecordingForwarder();
+    private const string Body =
+        "{\"model\":\"auto\",\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"refund my order\"}]}";
 
-        IResult result = await HandleAsync(
-            context,
-            new StubRegistry(new StubProvider("self-engine")),
-            forwarder,
-            AnonymousUser);
+    [Fact]
+    public async Task AnonymousRequest_ReturnsUnauthorizedWithoutForwarding()
+    {
+        var forwarder = new RecordingForwarder();
+        DefaultHttpContext context = CreateContext(Body);
+
+        IResult result = await HandleAsync(ChatProtocol.ChatCompletions, context, new StubSelection(null), forwarder, Anonymous);
         await result.ExecuteAsync(context);
 
         Assert.Equal(StatusCodes.Status401Unauthorized, context.Response.StatusCode);
@@ -29,161 +29,162 @@ public class ChatEndpointHandlerTests
     }
 
     [Fact]
-    public async Task HandleAsync_RoutingWasNotResolved_ReturnsInternalServerError()
+    public async Task AutoModel_SelectsByLastUserMessageAndForwardsRewrittenBodyWithIssuedIds()
     {
-        DefaultHttpContext context = CreateContext();
+        var selection = new StubSelection(new AgentSelection("finance", "partner", "session-1"));
+        var forwarder = new RecordingForwarder();
+        DefaultHttpContext context = CreateContext(Body);
 
-        IResult result = await HandleAsync(
-            context,
-            new StubRegistry(new StubProvider("self-engine")),
-            new RecordingForwarder(),
-            AuthenticatedUser);
-        await result.ExecuteAsync(context);
+        await HandleAsync(ChatProtocol.ChatCompletions, context, selection, forwarder, Authenticated);
 
-        Assert.Equal(StatusCodes.Status500InternalServerError, context.Response.StatusCode);
+        Assert.Equal("refund my order", selection.Message);
+        Assert.Null(selection.ExplicitAgentId);
+        Assert.Equal(ChatProtocol.ChatCompletions, selection.Protocol);
+        Assert.Equal("finance", JsonNode.Parse(forwarder.ForwardedBody!)!["model"]!.GetValue<string>());
+        Assert.True(forwarder.Streaming);
+        Assert.Equal("session-1", forwarder.SessionId);
+        Assert.Equal("session-1", context.Request.Headers["X-Session-Id"].ToString());
+        string chatId = context.Request.Headers["X-Chat-Id"].ToString();
+        Assert.StartsWith("chatcmpl-", chatId);
+        Assert.Equal(chatId, context.Response.Headers["X-Chat-Id"].ToString());
+        Assert.Equal("session-1", context.Response.Headers["X-Session-Id"].ToString());
+        Assert.Equal("finance", context.Response.Headers["X-OpenAgent-Selected-Agent-Id"].ToString());
     }
 
     [Fact]
-    public async Task HandleAsync_ProviderIsUnavailable_ReturnsServiceUnavailable()
+    public async Task ExplicitModel_IsPassedAsAgentAndResponsesChatIdUsesRespPrefix()
     {
-        DefaultHttpContext context = CreateContext();
-        context.Features.Set(new AgentRoutingFeature("conversation-1", "missing"));
+        var selection = new StubSelection(new AgentSelection("hr", "partner", "session-2"));
+        DefaultHttpContext context = CreateContext("{\"model\":\"hr\",\"input\":\"leave policy\"}");
 
-        IResult result = await HandleAsync(
-            context,
-            new StubRegistry(new StubProvider("self-engine")),
-            new RecordingForwarder(),
-            AuthenticatedUser);
+        await HandleAsync(ChatProtocol.Responses, context, selection, new RecordingForwarder(), Authenticated);
+
+        Assert.Equal("hr", selection.ExplicitAgentId);
+        Assert.StartsWith("resp_", context.Request.Headers["X-Chat-Id"].ToString());
+    }
+
+    [Fact]
+    public async Task ClientSuppliedChatId_IsReplacedByIssuedId()
+    {
+        DefaultHttpContext context = CreateContext(Body);
+        context.Request.Headers["X-Chat-Id"] = "forged";
+
+        await HandleAsync(ChatProtocol.ChatCompletions, context,
+            new StubSelection(new AgentSelection("finance", "partner", "s")), new RecordingForwarder(), Authenticated);
+
+        Assert.NotEqual("forged", context.Request.Headers["X-Chat-Id"].ToString());
+    }
+
+    [Fact]
+    public async Task RoutingFailure_ReturnsItsStatusWithoutForwarding()
+    {
+        var forwarder = new RecordingForwarder();
+        DefaultHttpContext context = CreateContext(Body);
+
+        IResult result = await HandleAsync(ChatProtocol.ChatCompletions, context,
+            new StubSelection(new AgentRoutingException(StatusCodes.Status409Conflict, "conflict", "conflict")),
+            forwarder, Authenticated);
+        await result.ExecuteAsync(context);
+
+        Assert.Equal(StatusCodes.Status409Conflict, context.Response.StatusCode);
+        Assert.Equal(0, forwarder.CallCount);
+    }
+
+    [Fact]
+    public async Task UnknownProvider_ReturnsServiceUnavailable()
+    {
+        DefaultHttpContext context = CreateContext(Body);
+
+        IResult result = await HandleAsync(ChatProtocol.ChatCompletions, context,
+            new StubSelection(new AgentSelection("finance", "missing", "s")), new RecordingForwarder(), Authenticated);
         await result.ExecuteAsync(context);
 
         Assert.Equal(StatusCodes.Status503ServiceUnavailable, context.Response.StatusCode);
     }
 
-    [Fact]
-    public async Task HandleAsync_ResolvedProvider_ForwardsRequestedAction()
+    private static Task<IResult> HandleAsync(
+        ChatProtocol protocol, HttpContext context, IAgentSelectionService selection,
+        IAgentForwarder forwarder, IAgentUserContext user) =>
+        ChatEndpointHandler.HandleAsync(
+            protocol, context, selection, new ChatSessionTracker(new InMemoryConversationResolver()),
+            new StubRegistry(new StubProvider("partner")), forwarder, user,
+            NullLogger.Instance, CancellationToken.None);
+
+    private static DefaultHttpContext CreateContext(string body)
     {
-        DefaultHttpContext context = CreateContext();
-        context.Features.Set(new AgentRoutingFeature("conversation-1", "partner"));
-        var provider = new StubProvider("partner");
-        var forwarder = new RecordingForwarder();
-
-        IResult result = await HandleAsync(
-            context,
-            new StubRegistry(provider),
-            forwarder,
-            AuthenticatedUser);
-
-        Assert.NotNull(result);
-        Assert.Equal(1, forwarder.CallCount);
-        Assert.Same(context, forwarder.Context);
-        Assert.Same(provider, forwarder.Provider);
-        Assert.Equal("stream", forwarder.Action);
+        var context = new DefaultHttpContext
+        {
+            RequestServices = new ServiceCollection().AddLogging().BuildServiceProvider()
+        };
+        context.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(body));
+        context.Response.Body = new MemoryStream();
+        return context;
     }
 
-    private static Task<IResult> HandleAsync(
-        HttpContext context,
-        IAgentProviderRegistry registry,
-        IAgentForwarder forwarder,
-        IAgentUserContext userContext) =>
-        ChatEndpointHandler.HandleAsync(
-            "stream",
-            context,
-            registry,
-            forwarder,
-            userContext,
-            NullLogger.Instance,
-            CancellationToken.None);
+    private static AgentUserContext Authenticated => new() { UserId = "user-1", TenantId = "tenant-1", IsAuthenticated = true };
 
-    private static DefaultHttpContext CreateContext() => new()
+    private static AgentUserContext Anonymous => new() { UserId = string.Empty, IsAuthenticated = false };
+
+    private sealed class StubSelection(object? outcome) : IAgentSelectionService
     {
-        RequestServices = new ServiceCollection().AddLogging().BuildServiceProvider()
-    };
+        public string? Message { get; private set; }
+        public string? ExplicitAgentId { get; private set; }
+        public ChatProtocol? Protocol { get; private set; }
 
-    private static AgentUserContext AuthenticatedUser => new()
-    {
-        UserId = "user-1",
-        TenantId = "tenant-1",
-        IsAuthenticated = true
-    };
-
-    private static AgentUserContext AnonymousUser => new()
-    {
-        UserId = string.Empty,
-        IsAuthenticated = false
-    };
-
-    private sealed class StubRegistry(IAgentProvider? provider) : IAgentProviderRegistry
-    {
-        public IReadOnlyList<IAgentProvider> Providers => provider is null ? [] : [provider];
-
-        public IAgentProvider DefaultProvider => provider
-            ?? throw new InvalidOperationException("A default provider is required.");
-
-        public bool TryGet(string providerId, out IAgentProvider? resolvedProvider)
+        public Task<AgentSelection?> SelectAsync(string message, string? conversationId, string? explicitAgentId,
+            CancellationToken cancellationToken, string? authenticationToken = null, ChatProtocol? protocol = null)
         {
-            resolvedProvider = provider?.Id == providerId ? provider : null;
-            return resolvedProvider is not null;
+            Message = message;
+            ExplicitAgentId = explicitAgentId;
+            Protocol = protocol;
+            return outcome is AgentRoutingException exception
+                ? Task.FromException<AgentSelection?>(exception)
+                : Task.FromResult((AgentSelection?)outcome);
+        }
+    }
+
+    private sealed class StubRegistry(IAgentProvider provider) : IAgentProviderRegistry
+    {
+        public IReadOnlyList<IAgentProvider> Providers => [provider];
+        public IAgentProvider DefaultProvider => provider;
+
+        public bool TryGet(string providerId, out IAgentProvider? resolved)
+        {
+            resolved = provider.Id == providerId ? provider : null;
+            return resolved is not null;
         }
     }
 
     private sealed class RecordingForwarder : IAgentForwarder
     {
         public int CallCount { get; private set; }
+        public bool Streaming { get; private set; }
+        public string? SessionId { get; private set; }
+        public string? ForwardedBody { get; private set; }
 
-        public HttpContext? Context { get; private set; }
-
-        public IAgentProvider? Provider { get; private set; }
-
-        public string? Action { get; private set; }
-
-        public Task ForwardAsync(
-            HttpContext context,
-            IAgentProvider provider,
-            string? action,
-            CancellationToken cancellationToken)
+        public async Task ForwardAsync(HttpContext context, IAgentProvider provider, ChatProtocol protocol,
+            bool streaming, string? sessionId, CancellationToken cancellationToken)
         {
             CallCount++;
-            Context = context;
-            Provider = provider;
-            Action = action;
-            return Task.CompletedTask;
+            Streaming = streaming;
+            SessionId = sessionId;
+            using var reader = new StreamReader(context.Request.Body, leaveOpen: true);
+            ForwardedBody = await reader.ReadToEndAsync(cancellationToken);
         }
     }
 
     private sealed class StubProvider(string id) : IAgentProvider
     {
         public string Id => id;
-        public bool SupportsRouterConversationIds => true;
+        public bool Supports(ChatProtocol protocol) => true;
 
-        public Task<AgentProviderCatalog> GetAgentsAsync(
-            AgentProviderRequestContext requestContext,
-            CancellationToken cancellationToken) =>
-            Task.FromResult(new AgentProviderCatalog([]));
+        public Task<AgentProviderCatalog> GetAgentsAsync(AgentProviderRequestContext requestContext,
+            CancellationToken cancellationToken) => Task.FromResult(new AgentProviderCatalog([]));
 
-        public Task<AgentProviderConversationStatus> ResolveConversationAsync(
-            AgentProviderRequestContext requestContext,
-            string conversationId,
-            CancellationToken cancellationToken) =>
-            Task.FromResult(AgentProviderConversationStatus.NotFound);
+        public Task<AgentForwardingTarget?> ResolveForwardingAsync(ChatProtocol protocol, string? tenantId,
+            string? sessionId, CancellationToken cancellationToken) => Task.FromResult<AgentForwardingTarget?>(null);
 
-        public Task<IntentRecognitionResult?> RecognizeIntentAsync(
-            AgentProviderRequestContext requestContext,
-            string intentAgentId,
-            IReadOnlyList<AgentSummary> agents,
-            string message,
-            CancellationToken cancellationToken) =>
-            Task.FromResult<IntentRecognitionResult?>(null);
-
-        public Task<AgentForwardingTarget?> ResolveForwardingAsync(
-            string? action,
-            string? tenantId,
-            string? conversationId,
-            CancellationToken cancellationToken) =>
-            Task.FromResult<AgentForwardingTarget?>(null);
-
-        public ValueTask ConfigureRequestAsync(
-            HttpRequestMessage request,
-            AgentForwardingTarget target,
+        public ValueTask ConfigureRequestAsync(HttpRequestMessage request, AgentForwardingTarget target,
             CancellationToken cancellationToken) => ValueTask.CompletedTask;
     }
 }

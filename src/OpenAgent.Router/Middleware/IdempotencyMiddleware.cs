@@ -99,7 +99,7 @@ internal sealed class IdempotencyMiddleware(
         if (acquisition.Status == IdempotencyAcquireStatus.Completed
             && acquisition.Response != null)
         {
-            if (acquisition.Response.RoutingHeaders?.TryGetValue("X-Conversation-Id", out string? id) == true
+            if (acquisition.Response.RoutingHeaders?.TryGetValue("X-Session-Id", out string? id) == true
                 && context.RequestServices?.GetService<IAgentSelectionService>() is { } selectionService)
             {
                 try
@@ -109,7 +109,7 @@ internal sealed class IdempotencyMiddleware(
                 }
                 catch (AgentRoutingException exception)
                 {
-                    await AgentProblemDetails.WriteAsync(context, RouterProblem.From(exception, context)).ConfigureAwait(false);
+                    await RouterProblem.WriteAsync(context, RouterProblem.From(exception, context)).ConfigureAwait(false);
                     return;
                 }
             }
@@ -143,7 +143,7 @@ internal sealed class IdempotencyMiddleware(
             return;
         }
 
-        if (RouterCachePolicy.IsStreamingRequest(context.Request))
+        if (RouterCachePolicy.IsStreamingRequest(context.Request, snapshot))
         {
             context.Response.OnStarting(async () =>
             {
@@ -151,7 +151,7 @@ internal sealed class IdempotencyMiddleware(
                 byte[] body = JsonSerializer.SerializeToUtf8Bytes(new
                 {
                     title = "Stream already started", status = 409,
-                    detail = "Use the returned conversation ID to continue; streams are not replayed."
+                    detail = "Use the returned session ID to continue; streams are not replayed."
                 });
                 bool completed = await store.CompleteAsync(storageKey, requestDigest, ownerToken,
                     new CachedResponse(409, "application/problem+json", body, GetRoutingHeaders(context)),
@@ -234,7 +234,7 @@ internal sealed class IdempotencyMiddleware(
     }
 
     private static Dictionary<string, string> GetRoutingHeaders(HttpContext context) =>
-        new[] { "X-Conversation-Id", "X-OpenAgent-Selected-Agent-Id" }
+        new[] { "X-Session-Id", "X-Chat-Id", "X-OpenAgent-Selected-Agent-Id" }
             .Where(name => context.Response.Headers.ContainsKey(name))
             .ToDictionary(name => name, name => context.Response.Headers[name].ToString());
 
@@ -243,16 +243,13 @@ internal sealed class IdempotencyMiddleware(
         int statusCode,
         string detail)
     {
-        byte[] body = JsonSerializer.SerializeToUtf8Bytes(new
-        {
-            title = "Idempotency conflict",
-            status = statusCode,
-            detail
-        });
-        context.Response.StatusCode = statusCode;
-        context.Response.ContentType = "application/problem+json";
-        context.Response.ContentLength = body.Length;
-        await context.Response.Body.WriteAsync(body, context.RequestAborted).ConfigureAwait(false);
+        await RouterProblem.WriteAsync(context, AgentProblemDetails.Create(
+            $"{AgentProblemDetails.TypePrefix}/idempotency-conflict",
+            "Idempotency conflict",
+            statusCode,
+            detail,
+            context.Request.Path,
+            AgentProblemDetails.ResolveTraceId(context)), context.RequestAborted).ConfigureAwait(false);
     }
 
     private async Task ReleaseSafelyAsync(

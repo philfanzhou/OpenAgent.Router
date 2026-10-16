@@ -1,5 +1,7 @@
 # Router 独立容器部署与新会话智能选 Agent
 
+> 本文是早期需求与设计记录。请求协议已改为标准 OpenAI / Anthropic 接口，下文中的 `/api/v1/agent/*`、`context.conversationId`、`X-Conversation-Id` 已被取代，现行行为以[部署文档](deployment.md)和[下游接入接口](downstream-api.md)为准。
+
 状态：方案已确认，首版实现随本 PR 提交。下文现状分析记录实现前的基线；运行配置与已交付行为以[部署文档](deployment.md)为准。
 
 已确认：显式指定 Agent 跳过模型；会话 ID 由 Router 生成；未知会话 ID 直接返回 404，不探测归属、不隐式创建。采用 Router 专用决策模型连接及受控默认 Agent 回退。
@@ -24,7 +26,6 @@
 | Agent 目录 | `AgentCatalogService` 聚合 Provider，经过访问控制过滤；重复 Agent ID 返回冲突 | 明确发布状态、健康与权限有效性；确认跨 Provider 的目录契约 |
 | 新会话选择 | `AgentSelectionService` 已执行“候选列表 → 意图选择 → 默认 Agent 回退” | 明确无会话 ID 的产品语义，补齐独立决策模型配置与完整验收 |
 | 决策调用 | `IntentAgentSelector` 委托 Provider；Engine Provider 调用 `/api/v1/agent/chat/intent`，传入候选 ID、名称、描述和用户消息 | 目前依赖 Engine 中的 `intent-router`，并要求请求带 `llmProfileId`；没有该字段会抛异常。应使用 Router 的专用决策模型配置 |
-| 第三方决策 | Gina 的 `RecognizeIntentAsync` 只做默认 Agent / 单候选确定性选择 | 这种路径不能当作“调用决策模型”验收；选择职责应从业务 Provider 解耦 |
 | 会话亲和 | Redis 保存 `ProviderId + Pending/Confirmed`；已有会话会探测 Provider 归属 | 未保存选中 Agent；无会话 ID 时不建立绑定，也未在转发层补录下游新会话 ID |
 | 未知会话 ID | Provider 均报告不存在时，当前仍可能进入新会话选择 | 需明确与“已有会话不重新选择”的边界，避免拼错 ID 时悄悄新建 |
 | 降级 | 意图超时、HTTP 失败等可返回空选择后回退；目录和决策还共用外层超时预算 | 外层超时可能直接返回 503，部分异常会继续抛出；需拆分预算并统一预期失败的回退行为 |
@@ -35,7 +36,7 @@
 主要证据入口：
 
 - [请求解析与选择入口](../src/OpenAgent.Router/Endpoints/AgentSelectionFilter.cs)、[选择服务](../src/OpenAgent.Router/Endpoints/AgentSelectionService.cs)
-- [意图选择器](../src/OpenAgent.Router/Endpoints/IntentAgentSelector.cs)、[Engine Provider](../src/OpenAgent.Router/Providers/OpenAgentEngineProvider.cs)、[Gina Provider](../src/OpenAgent.Router/Providers/GinaProvider.cs)
+- [意图选择器](../src/OpenAgent.Router/Endpoints/IntentAgentSelector.cs)、[Engine Provider](../src/OpenAgent.Router/Providers/OpenAgentEngineProvider.cs)
 - [目录服务](../src/OpenAgent.Router/Routing/AgentCatalogService.cs)、[ACL 服务](../src/OpenAgent.Router/Security/AgentVisibilityService.cs)
 - [会话解析](../src/OpenAgent.Router/Routing/ConversationProviderResolver.cs)、[亲和记录](../src/OpenAgent.Router/Models/ConversationProviderAffinity.cs)、[转发器](../src/OpenAgent.Router/Endpoints/AgentForwarder.cs)
 - [运行时注册](../src/OpenAgent.Router/Extensions/RouterServiceCollectionExtensions.cs)、[缓存策略](../src/OpenAgent.Router/Middleware/RouterCachePolicy.cs)、[幂等中间件](../src/OpenAgent.Router/Middleware/IdempotencyMiddleware.cs)
@@ -177,7 +178,7 @@ Router 必须验证结果可解析、Agent ID 属于本次候选、置信度是�
 - 存活探针表示进程可响应；就绪探针反映 Redis 和实际 Provider 是否能支持目标路由能力。模型故障但存在有效回退时标记降级，不能因为决策模型故障阻断仍可服务的已有会话；探针不通过付费模型推理探测健康。
 - 新增镜像构建与发布流程，使用可追溯版本标签；Compose 仅为部署样例，具体生产镜像仓库和发布平台另定。
 
-新增 `RouterSettings:DecisionModel` 表达 Endpoint、ModelId、密钥来源和输入输出限制；`IntentRecognition` 表达启用开关、阈值、目录/决策超时和回退 Agent。旧 `ProviderId/AgentId` 不再参与选择，具体配置以部署文档为准。
+新增 `RouterSettings:DecisionModel` 表达 Endpoint、密钥来源和输入输出限制；`IntentRecognition` 表达启用开关、阈值、目录/决策超时和回退 Agent。旧 `ProviderId/AgentId` 不再参与选择，具体配置以部署文档为准。
 
 生产不允许悄悄退回进程内会话存储。Redis 服务发现故障时，静态路由仍可帮助找到实例，但不能替代会话绑定持久化或授权所需状态。
 

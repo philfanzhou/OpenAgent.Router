@@ -7,15 +7,8 @@ public sealed record AgentProviderCatalog(
     IReadOnlyList<AgentSummary> Agents,
     bool IsAvailable = true);
 
-public enum AgentProviderConversationStatus
-{
-    NotFound,
-    Found,
-    Forbidden,
-    Unavailable
-}
-
+/// <param name="Protocol">When set, only providers serving this protocol take part.</param>
 public sealed record AgentProviderRequestContext(
     IAgentUserContext UserContext,
     string? AuthenticationToken = null,
-    string? LlmProfileId = null);
+    ChatProtocol? Protocol = null);

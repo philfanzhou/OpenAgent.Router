@@ -14,9 +14,7 @@ services:
       Authentication__Audience: ${AUDIENCE:?Set the JWT audience}
       Authentication__ClientId: ${CLIENT_ID:?Set the authentication client ID}
       RouterSettings__AgentProviders__Providers__0__Settings__BaseUrl: ${ENGINE_URL:?Set a reachable Engine URL}
-      RouterSettings__AgentProviders__Providers__0__Settings__DefaultLlmProfileId: ${ENGINE_LLM_PROFILE_ID:-}
-      RouterSettings__DecisionModel__Endpoint: ${DECISION_MODEL_ENDPOINT:?Set the complete Chat Completions URL}
-      RouterSettings__DecisionModel__ModelId: ${DECISION_MODEL_ID:?Set the routing model ID}
+      RouterSettings__DecisionModel__Endpoint: ${DECISION_MODEL_ENDPOINT:?Set the complete jev decisions URL}
       RouterSettings__DecisionModel__ApiKeyFile: /run/secrets/decision_model_api_key
       RouterSettings__IntentRecognition__FallbackAgentId: ${FALLBACK_AGENT_ID:-default}
     secrets:

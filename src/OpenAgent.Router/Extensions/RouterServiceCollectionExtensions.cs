@@ -40,7 +40,6 @@ public static class RouterServiceCollectionExtensions
             .Validate(AgentProviderOptions.IsValid, "Agent provider configuration is invalid")
             .ValidateOnStart();
         services.AddSingleton<IAgentProviderFactory, OpenAgentEngineProviderFactory>();
-        services.AddSingleton<IAgentProviderFactory, GinaProviderFactory>();
         services.AddSingleton<IAgentProviderRegistry, AgentProviderRegistry>();
         services.AddScoped<IAgentCatalogService, AgentCatalogService>();
         services.AddSingleton<IConversationProviderStore, ConversationProviderStore>();
@@ -49,6 +48,7 @@ public static class RouterServiceCollectionExtensions
         services.AddSingleton<IIntentAgentSelector, IntentAgentSelector>();
         services.AddSingleton<DecisionModelStatus>();
         services.AddScoped<IAgentSelectionService, AgentSelectionService>();
+        services.AddSingleton<ChatSessionTracker>();
         services.AddSingleton(new RouterCacheSettings(configuration));
         services.AddSingleton<IIdempotencyStore, IdempotencyStore>();
         services.AddSingleton<IQueryCache, RouterQueryCache>();

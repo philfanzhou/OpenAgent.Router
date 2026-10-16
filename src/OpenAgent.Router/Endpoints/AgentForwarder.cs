@@ -30,22 +30,23 @@ internal sealed class AgentForwarder(
     public async Task ForwardAsync(
         HttpContext context,
         IAgentProvider provider,
-        string? action,
+        ChatProtocol protocol,
+        bool streaming,
+        string? sessionId,
         CancellationToken cancellationToken)
     {
-        bool isStreaming = action is "sse" or "stream";
+        bool isStreaming = streaming;
+        string action = streaming ? "stream" : "chat";
         long forwardingStarted = Stopwatch.GetTimestamp();
         IAgentUserContext userContext = context.RequestServices
             .GetRequiredService<IAgentUserContext>();
         string? tenantId = userContext.TenantId;
-        string? conversationId = context.Features.Get<AgentRoutingFeature>()?.ConversationId
-            ?? context.Request.Headers["X-Conversation-Id"].FirstOrDefault();
         string traceId = Activity.Current?.Id ?? context.TraceIdentifier;
 
         AgentForwardingTarget? target = await provider.ResolveForwardingAsync(
-            action,
+            protocol,
             tenantId,
-            conversationId,
+            sessionId,
             cancellationToken).ConfigureAwait(false);
         if (target == null)
         {
@@ -57,7 +58,7 @@ internal sealed class AgentForwarder(
                     Stopwatch.GetElapsedTime(forwardingStarted),
                     succeeded: false);
             }
-            await AgentProblemDetails.WriteAsync(
+            await RouterProblem.WriteAsync(
                 context,
                 RouterProblem.From(new AgentRoutingException(
                     StatusCodes.Status503ServiceUnavailable,
@@ -108,7 +109,7 @@ internal sealed class AgentForwarder(
         RouterLog.ProviderForwardingResponse(
             logger,
             provider.Id,
-            action ?? "chat",
+            action,
             context.Response.StatusCode,
             RouterHttpLog.FormatResponseHeaders(context.Response.Headers),
             traceId);

@@ -52,7 +52,6 @@ internal sealed class RouterApplicationFactory(
                 ["RouterSettings:IntentRecognition:Enabled"] = "false",
                 ["RouterSettings:IntentRecognition:FallbackAgentId"] = "default",
                 ["RouterSettings:Routing:EngineEndpoint"] = engineEndpoint,
-                ["RouterSettings:AgentProviders:Providers:0:Settings:DefaultLlmProfileId"] = "test-execution-profile",
                 ["RouterSettings:RateLimiting:RequestsPerSecond"] = requestsPerSecond.ToString(),
                 ["RouterSettings:RateLimiting:BurstCapacity"] = burstCapacity.ToString()
             });
@@ -81,21 +80,18 @@ public sealed class TestEngineHost(string responseName) : IAsyncDisposable
 
     public int ChatRequestCount => Volatile.Read(ref _chatRequestCount);
     public int DecisionCount => Volatile.Read(ref _decisionCount);
-    public string? LastConversationId { get; private set; }
-    public string? LastAgentId { get; private set; }
+    public string? LastSessionId { get; private set; }
+    public string? LastChatId { get; private set; }
+    public string? LastModel { get; private set; }
+    public string? LastChatPath { get; private set; }
     public string? LastChatBody { get; private set; }
     public string? LastDecisionBody { get; private set; }
-    public string? LastExecutionProfile { get; private set; }
 
     public string? LastUserId { get; private set; }
 
     public string? LastTenantId { get; private set; }
 
     public string? LastAuthorization { get; private set; }
-
-    public string? LastCompactedConversationId { get; private set; }
-
-    public string? LastCatalogTenantId { get; private set; }
 
     public string? UploadedFileName { get; private set; }
 
@@ -115,82 +111,56 @@ public sealed class TestEngineHost(string responseName) : IAsyncDisposable
         WebApplication application = builder.Build();
 
         application.MapGet("/ready", () => Results.Ok());
-        application.MapGet("/api/v1/agent/agents", (HttpContext context) =>
+        application.MapGet("/v1/models", (HttpContext context) =>
         {
-            LastCatalogTenantId = context.Request.Headers["X-Tenant-Id"].FirstOrDefault();
             LastAuthorization = context.Request.Headers.Authorization.FirstOrDefault();
-            return Results.Json(new[]
+            return Results.Json(new
             {
-                new { agentId = "default", name = "Default", description = "General questions", tenantId = "tenant-1", status = 2 },
-                new { agentId = "finance", name = "Finance", description = "Invoices", tenantId = "tenant-1", status = 2 },
-                new { agentId = "draft", name = "Draft", description = "Unpublished", tenantId = "tenant-1", status = 0 },
-                new { agentId = "private", name = "Private", description = "Other tenant", tenantId = "tenant-2", status = 2 }
+                @object = "list",
+                data = new[]
+                {
+                    new { id = "default", description = "General questions" },
+                    new { id = "finance", description = "Invoices" }
+                }
             });
         });
-        application.MapPost("/v1/chat/completions", async context =>
+        application.MapPost("/v1/decide", async context =>
         {
             Interlocked.Increment(ref _decisionCount);
             using var reader = new StreamReader(context.Request.Body);
             LastDecisionBody = await reader.ReadToEndAsync(context.RequestAborted);
             await context.Response.WriteAsJsonAsync(new
             {
-                choices = new[] { new { finish_reason = "stop",
-                    message = new { content = "{\"agentId\":\"finance\",\"confidence\":0.95}" } } }
+                answers = new { agent = new { type = "choice", choice = "finance", confidence = 0.95 } }
             });
         });
-        application.MapPost("/api/v1/agent/chat", async context =>
+        foreach (string path in new[] { "/v1/chat/completions", "/v1/responses", "/v1/messages" })
         {
-            Interlocked.Increment(ref _chatRequestCount);
-            LastUserId = context.Request.Headers["X-User-Id"].FirstOrDefault();
-            LastTenantId = context.Request.Headers["X-Tenant-Id"].FirstOrDefault();
-            LastAuthorization = context.Request.Headers.Authorization.FirstOrDefault();
-            LastConversationId = context.Request.Headers["X-Conversation-Id"].FirstOrDefault();
-            LastAgentId = context.Request.Headers["X-Agent-Id"].FirstOrDefault();
-            using var bodyReader = new StreamReader(context.Request.Body);
-            LastChatBody = await bodyReader.ReadToEndAsync(context.RequestAborted);
-            using var parsed = JsonDocument.Parse(LastChatBody);
-            JsonElement chatContext = parsed.RootElement.GetProperty("context");
-            LastExecutionProfile = chatContext.TryGetProperty("llmProfileId", out JsonElement profile)
-                && profile.ValueKind == JsonValueKind.String ? profile.GetString()
-                : context.Request.Headers["X-OpenAgent-Llm-Profile-Id"].FirstOrDefault();
-            if (string.IsNullOrWhiteSpace(LastExecutionProfile))
+            application.MapPost(path, async context =>
             {
-                context.Response.StatusCode = StatusCodes.Status400BadRequest;
-                return;
-            }
-            context.Response.ContentType = "application/json";
-            context.Response.Headers.CacheControl = "public, max-age=60";
-            await context.Response.WriteAsync(
-                $$"""{"message":"{{responseName}}"}""",
-                context.RequestAborted).ConfigureAwait(false);
-        });
-        RequestDelegate streamHandler = async context =>
-        {
-            context.Response.ContentType = "text/event-stream";
-            context.Response.Headers.CacheControl = "no-cache";
-            await context.Response.WriteAsync(
-                "event: token\ndata: first\n\n",
-                context.RequestAborted).ConfigureAwait(false);
-            await context.Response.Body.FlushAsync(context.RequestAborted).ConfigureAwait(false);
-            try
-            {
-                await Task.Delay(Timeout.InfiniteTimeSpan, context.RequestAborted).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
-            {
-                _sseCanceled.TrySetResult(true);
-            }
-        };
-        application.MapPost("/api/v1/agent/chat/sse", streamHandler);
-        application.MapPost("/api/v1/agent/chat/stream", streamHandler);
-        application.MapPost(
-            "/api/v1/agent/conversations/{conversationId}/compact",
-            (HttpContext context, string conversationId) =>
-            {
-                LastCompactedConversationId = conversationId;
+                Interlocked.Increment(ref _chatRequestCount);
+                LastUserId = context.Request.Headers["X-User-Id"].FirstOrDefault();
+                LastTenantId = context.Request.Headers["X-Tenant-Id"].FirstOrDefault();
                 LastAuthorization = context.Request.Headers.Authorization.FirstOrDefault();
-                return Results.Json(new { status = "Succeeded", trigger = "Manual" });
+                LastSessionId = context.Request.Headers["X-Session-Id"].FirstOrDefault();
+                LastChatId = context.Request.Headers["X-Chat-Id"].FirstOrDefault();
+                LastChatPath = context.Request.Path;
+                using var bodyReader = new StreamReader(context.Request.Body);
+                LastChatBody = await bodyReader.ReadToEndAsync(context.RequestAborted);
+                using var parsed = JsonDocument.Parse(LastChatBody);
+                LastModel = parsed.RootElement.GetProperty("model").GetString();
+                if (parsed.RootElement.TryGetProperty("stream", out JsonElement stream) && stream.GetBoolean())
+                {
+                    await HoldEventStreamAsync(context);
+                    return;
+                }
+                context.Response.ContentType = "application/json";
+                context.Response.Headers.CacheControl = "public, max-age=60";
+                await context.Response.WriteAsync(
+                    $$"""{"id":"{{LastChatId}}","message":"{{responseName}}"}""",
+                    context.RequestAborted).ConfigureAwait(false);
             });
+        }
         application.MapPost("/api/v1/agent/files", async context =>
         {
             IFormCollection form = await context.Request.ReadFormAsync(
@@ -220,6 +190,24 @@ public sealed class TestEngineHost(string responseName) : IAsyncDisposable
         IServer server = application.Services.GetRequiredService<IServer>();
         Endpoint = server.Features.Get<IServerAddressesFeature>()!.Addresses.Single();
         _application = application;
+    }
+
+    private async Task HoldEventStreamAsync(HttpContext context)
+    {
+        context.Response.ContentType = "text/event-stream";
+        context.Response.Headers.CacheControl = "no-cache";
+        await context.Response.WriteAsync(
+            "event: token\ndata: first\n\n",
+            context.RequestAborted).ConfigureAwait(false);
+        await context.Response.Body.FlushAsync(context.RequestAborted).ConfigureAwait(false);
+        try
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, context.RequestAborted).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+        {
+            _sseCanceled.TrySetResult(true);
+        }
     }
 
     public Task WaitForSseCancellationAsync(CancellationToken cancellationToken) =>

@@ -1,3 +1,5 @@
+using OpenAgent.Router.Models;
+
 namespace OpenAgent.Router;
 
 internal interface IAgentForwarder
@@ -5,6 +7,8 @@ internal interface IAgentForwarder
     Task ForwardAsync(
         HttpContext context,
         IAgentProvider provider,
-        string? action,
+        ChatProtocol protocol,
+        bool streaming,
+        string? sessionId,
         CancellationToken cancellationToken);
 }

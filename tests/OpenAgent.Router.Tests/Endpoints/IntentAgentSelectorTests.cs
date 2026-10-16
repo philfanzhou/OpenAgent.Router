@@ -32,26 +32,25 @@ public class IntentAgentSelectorTests
         var handler = new Handler();
         var selector = Create(handler);
         string? result = await selector.SelectAsync(new AgentProviderRequestContext(
-            new AgentUserContext { UserId = "user", TenantId = "tenant" }, "Bearer caller-secret", "execution-profile"),
+            new AgentUserContext { UserId = "user", TenantId = "tenant" }, "Bearer caller-secret"),
             "find invoice", Candidates, CancellationToken.None);
         Assert.Equal("finance", result);
         Assert.Equal("Bearer routing-secret", handler.Authorization);
         using var body = JsonDocument.Parse(handler.RequestBody!);
-        Assert.Equal("routing-model", body.RootElement.GetProperty("model").GetString());
-        string input = body.RootElement.GetProperty("messages")[1].GetProperty("content").GetString()!;
-        Assert.Contains("find invoice", input);
-        Assert.Contains("Handles invoices", input);
+        Assert.Contains("find invoice", body.RootElement.GetProperty("state").GetString());
+        JsonElement question = body.RootElement.GetProperty("questions").GetProperty("agent");
+        Assert.Equal("choice", question.GetProperty("type").GetString());
+        Assert.Equal("Handles invoices", question.GetProperty("criteria").GetProperty("finance").GetString());
         Assert.DoesNotContain("caller-secret", handler.RequestBody);
-        Assert.DoesNotContain("execution-profile", handler.RequestBody);
-    }
+            }
 
     [Theory]
     [InlineData("not json")]
     [InlineData("{}")]
-    [InlineData("{\"agentId\":\"finance\"}")]
-    [InlineData("{\"agentId\":\"finance\",\"confidence\":null}")]
-    [InlineData("{\"agentId\":\"unknown\",\"confidence\":0.99}")]
-    [InlineData("{\"agentId\":\"finance\",\"confidence\":0.01}")]
+    [InlineData("{\"answers\":{\"agent\":{\"choice\":\"finance\"}}}")]
+    [InlineData("{\"answers\":{\"agent\":{\"choice\":\"finance\",\"confidence\":null}}}")]
+    [InlineData("{\"answers\":{\"agent\":{\"choice\":\"unknown\",\"confidence\":0.99}}}")]
+    [InlineData("{\"answers\":{\"agent\":{\"choice\":\"finance\",\"confidence\":0.01}}}")]
     public async Task InvalidDecision_ReturnsNoSelection(string content)
     {
         var selector = Create(new Handler { Content = content });
@@ -77,9 +76,18 @@ public class IntentAgentSelectorTests
     }
 
     [Fact]
+    public async Task InputOverModelContext_ReturnsNoSelectionWithoutCallingModel()
+    {
+        var handler = new Handler();
+        var selector = Create(handler);
+        Assert.Null(await selector.SelectAsync(Context(), new string('x', 8000), Candidates, CancellationToken.None));
+        Assert.Null(handler.RequestBody);
+    }
+
+    [Fact]
     public async Task OversizedResponse_ReturnsNoSelection()
     {
-        var selector = Create(new Handler { Content = new string('x', 20000) });
+        var selector = Create(new Handler { Content = "{\"pad\":\"" + new string('x', 20000) + "\"}" });
         Assert.Null(await selector.SelectAsync(Context(), "invoice", Candidates, CancellationToken.None));
     }
 
@@ -87,7 +95,7 @@ public class IntentAgentSelectorTests
     private static IntentAgentSelector Create(Handler handler, int timeoutMs = 1000) => new(
         new ClientFactory(handler), Microsoft.Extensions.Options.Options.Create(new DecisionModelOptions
         {
-            Endpoint = "http://model/v1/chat/completions", ModelId = "routing-model", ApiKey = "routing-secret"
+            Endpoint = "http://model/v1/decisions", ApiKey = "routing-secret"
         }), Microsoft.Extensions.Options.Options.Create(new IntentRecognitionOptions { TimeoutMs = timeoutMs }),
         NullLogger<IntentAgentSelector>.Instance);
 
@@ -98,7 +106,7 @@ public class IntentAgentSelectorTests
 
     private sealed class Handler : HttpMessageHandler
     {
-        public string Content { get; init; } = "{\"agentId\":\"finance\",\"confidence\":0.95}";
+        public string Content { get; init; } = "{\"answers\":{\"agent\":{\"choice\":\"finance\",\"confidence\":0.95}}}";
         public HttpStatusCode Status { get; init; } = HttpStatusCode.OK;
         public bool Delay { get; init; }
         public string? RequestBody { get; private set; }
@@ -110,10 +118,7 @@ public class IntentAgentSelectorTests
             Authorization = request.Headers.Authorization?.ToString();
             return new HttpResponseMessage(Status)
             {
-                Content = new StringContent(JsonSerializer.Serialize(new
-                {
-                    choices = new[] { new { finish_reason = "stop", message = new { content = Content } } }
-                }))
+                Content = new StringContent(Content)
             };
         }
     }

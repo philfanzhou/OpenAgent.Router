@@ -19,14 +19,14 @@ internal sealed class AgentSelectionService(
         string? explicitAgentId,
         CancellationToken cancellationToken,
         string? authenticationToken = null,
-        string? llmProfileId = null)
+        ChatProtocol? protocol = null)
     {
         if (string.IsNullOrWhiteSpace(userContext.TenantId))
         {
             throw new AgentRoutingException(StatusCodes.Status400BadRequest,
                 RouterErrorCodes.InvalidTenant, "Tenant ID is required");
         }
-        AgentProviderRequestContext requestContext = new(userContext, authenticationToken, llmProfileId);
+        AgentProviderRequestContext requestContext = new(userContext, authenticationToken, protocol);
         if (!string.IsNullOrWhiteSpace(conversationId))
         {
             ConversationProviderAffinity affinity = await conversations.ResolveAsync(

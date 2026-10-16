@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using OpenAgent.Contracts.Configuration;
 using OpenAgent.Contracts.Security;
@@ -7,36 +8,35 @@ using Xunit;
 
 namespace OpenAgent.Router.Tests.Endpoints;
 
-public class AgentCatalogEndpointHandlerTests
+public class ModelCatalogEndpointHandlerTests
 {
     [Fact]
-    public async Task HandleAsync_AuthorizedCatalog_ReturnsAgentsWithoutProviderIds()
+    public async Task HandleAsync_AuthorizedCatalog_ReturnsStandardModelListStartingWithAuto()
     {
         var catalog = new StubCatalogService(
         [
-            new AgentCatalogEntry(new AgentSummary { AgentId = "finance" }, "partner"),
-            new AgentCatalogEntry(new AgentSummary { AgentId = "general" }, "self-engine")
+            new AgentCatalogEntry(new AgentSummary { AgentId = "finance", Name = "Finance", Description = "Invoices" }, "partner")
         ]);
 
-        IResult result = await AgentCatalogEndpointHandler.HandleAsync(
+        IResult result = await ModelCatalogEndpointHandler.HandleAsync(
             catalog,
             AuthenticatedUser,
             new DefaultHttpContext(),
             CancellationToken.None);
 
         IValueHttpResult valueResult = Assert.IsAssignableFrom<IValueHttpResult>(result);
-        IEnumerable<AgentSummary> agents = Assert.IsAssignableFrom<IEnumerable<AgentSummary>>(
-            valueResult.Value);
-        Assert.Equal(["finance", "general"], agents.Select(agent => agent.AgentId));
-        Assert.DoesNotContain(
-            agents.SelectMany(agent => agent.GetType().GetProperties()),
-            property => property.Name.Equals("ProviderId", StringComparison.OrdinalIgnoreCase));
+        using JsonDocument body = JsonDocument.Parse(JsonSerializer.Serialize(valueResult.Value));
+        Assert.Equal("list", body.RootElement.GetProperty("object").GetString());
+        JsonElement[] data = body.RootElement.GetProperty("data").EnumerateArray().ToArray();
+        Assert.Equal(["auto", "finance"], data.Select(model => model.GetProperty("id").GetString()));
+        Assert.Equal("Invoices", data[1].GetProperty("description").GetString());
+        Assert.Equal("model", data[1].GetProperty("object").GetString());
     }
 
     [Fact]
     public async Task HandleAsync_AnonymousUser_ReturnsUnauthorized()
     {
-        IResult result = await AgentCatalogEndpointHandler.HandleAsync(
+        IResult result = await ModelCatalogEndpointHandler.HandleAsync(
             new StubCatalogService([]),
             new AgentUserContext { UserId = "anonymous", IsAuthenticated = false },
             new DefaultHttpContext(),

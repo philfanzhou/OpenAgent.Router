@@ -209,9 +209,7 @@ internal static class RouterCacheKeyFactory
             '\n',
             snapshot.Digest,
             request.Headers["X-Agent-Id"].ToString(),
-            request.Headers["X-Conversation-Id"].ToString(),
-            request.Headers["X-Gina-Agent-Id"].ToString(),
-            request.Headers["X-Gina-Session-Id"].ToString(),
+            request.Headers["X-Session-Id"].ToString(),
             request.Headers["X-OpenAgent-Llm-Profile-Id"].ToString());
         return Hash(material);
     }

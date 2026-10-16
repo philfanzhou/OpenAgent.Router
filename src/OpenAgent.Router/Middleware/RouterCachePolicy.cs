@@ -4,15 +4,25 @@ namespace OpenAgent.Router.Middleware;
 
 internal static class RouterCachePolicy
 {
-    internal static bool IsStreamingRequest(HttpRequest request)
+    /// <summary>The standard chat protocols ask for a stream with <c>"stream": true</c> in the body.</summary>
+    internal static bool IsStreamingRequest(HttpRequest request, RequestBodySnapshot snapshot)
     {
-        string? action = request.HttpContext.Request.Path.Value?
-            .Split('/', StringSplitOptions.RemoveEmptyEntries)
-            .LastOrDefault();
-        return string.Equals(action, "stream", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(action, "sse", StringComparison.OrdinalIgnoreCase)
-            || request.Headers.Accept.Any(value =>
-                value?.Contains("text/event-stream", StringComparison.OrdinalIgnoreCase) == true);
+        if (request.Headers.Accept.Any(value =>
+            value?.Contains("text/event-stream", StringComparison.OrdinalIgnoreCase) == true))
+        {
+            return true;
+        }
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(snapshot.CanonicalBody);
+            return document.RootElement.ValueKind == JsonValueKind.Object
+                && document.RootElement.TryGetProperty("stream", out JsonElement stream)
+                && stream.ValueKind == JsonValueKind.True;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 
     internal static bool IsStreamingContentType(string? contentType)

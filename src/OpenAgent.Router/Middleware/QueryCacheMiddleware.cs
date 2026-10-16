@@ -19,7 +19,6 @@ internal sealed class QueryCacheMiddleware(
         IQueryCache queryCache)
     {
         if (!userContext.IsAuthenticated
-            || RouterCachePolicy.IsStreamingRequest(context.Request)
             || !RequestBodySnapshot.IsJsonContentType(context.Request))
         {
             await next(context).ConfigureAwait(false);
@@ -29,7 +28,8 @@ internal sealed class QueryCacheMiddleware(
         RequestBodySnapshot snapshot = await RequestBodySnapshot.GetAsync(
             context,
             settings.MaxRequestBodyBytes).ConfigureAwait(false);
-        if (!RouterCachePolicy.IsQueryRequestCacheable(context.Request, snapshot))
+        if (RouterCachePolicy.IsStreamingRequest(context.Request, snapshot)
+            || !RouterCachePolicy.IsQueryRequestCacheable(context.Request, snapshot))
         {
             await next(context).ConfigureAwait(false);
             return;

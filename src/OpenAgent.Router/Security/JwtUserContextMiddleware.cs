@@ -99,6 +99,7 @@ public class JwtUserContextMiddleware
     }
 
     private static bool RequiresTenant(PathString path) =>
-        path.StartsWithSegments("/api/v1/agent")
+        path.StartsWithSegments("/v1")
+        || path.StartsWithSegments("/api/v1/agent")
         || path.StartsWithSegments("/api/v1/admin");
 }
