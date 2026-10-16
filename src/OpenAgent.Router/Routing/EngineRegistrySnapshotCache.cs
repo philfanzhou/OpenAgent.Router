@@ -10,8 +10,6 @@ public sealed class EngineRegistrySnapshotCache : BackgroundService
 {
     internal const string RegistryIndexKey = "engine:registry:index";
 
-    internal static string RegistryKey(string engineId) => $"engine:registry:{engineId}";
-
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true
@@ -113,7 +111,7 @@ public sealed class EngineRegistrySnapshotCache : BackgroundService
         }
 
         RedisKey[] keys = engineIds
-            .Select(engineId => (RedisKey)RegistryKey(engineId))
+            .Select(engineId => (RedisKey)$"engine:registry:{engineId}")
             .ToArray();
         RedisValue[] payloads = await database.StringGetAsync(keys)
             .WaitAsync(cancellationToken).ConfigureAwait(false);

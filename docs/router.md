@@ -59,17 +59,6 @@ Router 会在 `Information` 级别记录 Provider 的请求方法、目标 URI�
 | `RouterSettings:ServiceDiscovery:FailureQuarantineSeconds` | `30` | 下游失败后的隔离时间 |
 | `RouterSettings:ServiceDiscovery:ReadinessPath` | `/ready` | Engine 下游就绪端点 |
 | `RouterSettings:ServiceDiscovery:ReadinessTimeoutMs` | `2000` | 单次下游探测超时 |
-| `RouterSettings:Registration:SharedSecret` | 空 | 下游 HTTP 注册的共享密钥；为空时不暴露注册端点 |
-
-## HTTP 注册
-
-下游可调用 `PUT /api/v1/router/registrations/{instanceId}` 注册并周期续约，`DELETE` 同路径下线。请求头 `X-Registration-Key` 必须等于 `SharedSecret`，否则 401；没有 Redis 时返回 503，成功返回 204。注册数据写入原有 `engine:registry:*` 键，因此与直接写 Redis 的 Engine 共用同一个池，两种方式可并存。
-
-```json
-{ "baseUrl": "http://engine-7f3a:5208", "ttlSeconds": 30, "load": 0, "intents": ["chat"] }
-```
-
-`baseUrl` 只接受不带路径的 `http` 地址；`ttlSeconds` 取 5 至 300。共享密钥是整个集群一把，泄露后需同时轮换 Router 与所有下游。
 
 ## 验证
 

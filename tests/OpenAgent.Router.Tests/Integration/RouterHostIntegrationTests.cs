@@ -39,34 +39,6 @@ public sealed class RouterHostIntegrationTests : IClassFixture<RouterHostFixture
     }
 
     [Fact]
-    public async Task Registration_ReachesHandlerWithoutUserAuthentication_AndChecksSharedSecret()
-    {
-        using RouterApplicationFactory factory = _fixture.CreateFactory(settings: new()
-        {
-            ["RouterSettings:Registration:SharedSecret"] = "s3cret"
-        });
-        using HttpClient client = factory.CreateClient();
-        string route = RegistrationRequest.Route("engine-1");
-
-        using HttpResponseMessage wrongKey = await Put(client, route, "wrong");
-        using HttpResponseMessage rightKey = await Put(client, route, "s3cret");
-
-        Assert.Equal(HttpStatusCode.Unauthorized, wrongKey.StatusCode);
-        // No Redis in this host: the request got past authentication and stopped at the writer check.
-        Assert.Equal(HttpStatusCode.ServiceUnavailable, rightKey.StatusCode);
-    }
-
-    private static Task<HttpResponseMessage> Put(HttpClient client, string route, string key)
-    {
-        HttpRequestMessage request = new(HttpMethod.Put, route)
-        {
-            Content = JsonContent.Create(new RegistrationRequest { BaseUrl = "http://engine:5208" })
-        };
-        request.Headers.Add(RegistrationRequest.KeyHeader, key);
-        return client.SendAsync(request);
-    }
-
-    [Fact]
     public async Task DuplicateRoutingProperties_AreRejectedBeforeForwarding()
     {
         using var factory = _fixture.CreateFactory();
