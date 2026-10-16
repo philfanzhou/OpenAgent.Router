@@ -40,11 +40,9 @@ internal sealed class AgentSelectionFilter(
         {
             routingConversationId = RoutingRequestNormalizer.Merge("conversationId", StringComparer.Ordinal,
                 new[] { request.ConversationId }
-                    .Concat(context.Request.Headers["X-Conversation-Id"])
-                    .Concat(context.Request.Headers["X-Gina-Session-Id"]));
+                    .Concat(context.Request.Headers["X-Conversation-Id"]));
             string? explicitAgentId = RoutingRequestNormalizer.Merge("agentId", StringComparer.OrdinalIgnoreCase,
-                new[] { request.AgentId }.Concat(context.Request.Headers["X-Agent-Id"])
-                    .Concat(context.Request.Headers["X-Gina-Agent-Id"]));
+                new[] { request.AgentId }.Concat(context.Request.Headers["X-Agent-Id"]));
             selection = await selectionService.SelectAsync(
                 request.Query,
                 routingConversationId,
@@ -79,7 +77,6 @@ internal sealed class AgentSelectionFilter(
         if (conversationId != null)
         {
             context.Request.Headers["X-Conversation-Id"] = conversationId;
-            context.Request.Headers.Remove("X-Gina-Session-Id");
             context.Response.Headers["X-Conversation-Id"] = conversationId;
         }
         context.Response.OnStarting(() =>
@@ -89,7 +86,6 @@ internal sealed class AgentSelectionFilter(
                 context.Response.Headers["X-OpenAgent-Selected-Agent-Id"] = selection.AgentId;
             return Task.CompletedTask;
         });
-        context.Request.Headers.Remove("X-Gina-Agent-Id");
         Stream original = context.Request.Body;
         await using Stream normalized = await RoutingRequestNormalizer.RewriteAsync(
             context.Request, conversationId, selection.AgentId, context.RequestAborted).ConfigureAwait(false);

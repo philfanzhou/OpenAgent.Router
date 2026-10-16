@@ -24,7 +24,6 @@
 | Agent 目录 | `AgentCatalogService` 聚合 Provider，经过访问控制过滤；重复 Agent ID 返回冲突 | 明确发布状态、健康与权限有效性；确认跨 Provider 的目录契约 |
 | 新会话选择 | `AgentSelectionService` 已执行“候选列表 → 意图选择 → 默认 Agent 回退” | 明确无会话 ID 的产品语义，补齐独立决策模型配置与完整验收 |
 | 决策调用 | `IntentAgentSelector` 委托 Provider；Engine Provider 调用 `/api/v1/agent/chat/intent`，传入候选 ID、名称、描述和用户消息 | 目前依赖 Engine 中的 `intent-router`，并要求请求带 `llmProfileId`；没有该字段会抛异常。应使用 Router 的专用决策模型配置 |
-| 第三方决策 | Gina 的 `RecognizeIntentAsync` 只做默认 Agent / 单候选确定性选择 | 这种路径不能当作“调用决策模型”验收；选择职责应从业务 Provider 解耦 |
 | 会话亲和 | Redis 保存 `ProviderId + Pending/Confirmed`；已有会话会探测 Provider 归属 | 未保存选中 Agent；无会话 ID 时不建立绑定，也未在转发层补录下游新会话 ID |
 | 未知会话 ID | Provider 均报告不存在时，当前仍可能进入新会话选择 | 需明确与“已有会话不重新选择”的边界，避免拼错 ID 时悄悄新建 |
 | 降级 | 意图超时、HTTP 失败等可返回空选择后回退；目录和决策还共用外层超时预算 | 外层超时可能直接返回 503，部分异常会继续抛出；需拆分预算并统一预期失败的回退行为 |
@@ -35,7 +34,7 @@
 主要证据入口：
 
 - [请求解析与选择入口](../src/OpenAgent.Router/Endpoints/AgentSelectionFilter.cs)、[选择服务](../src/OpenAgent.Router/Endpoints/AgentSelectionService.cs)
-- [意图选择器](../src/OpenAgent.Router/Endpoints/IntentAgentSelector.cs)、[Engine Provider](../src/OpenAgent.Router/Providers/OpenAgentEngineProvider.cs)、[Gina Provider](../src/OpenAgent.Router/Providers/GinaProvider.cs)
+- [意图选择器](../src/OpenAgent.Router/Endpoints/IntentAgentSelector.cs)、[Engine Provider](../src/OpenAgent.Router/Providers/OpenAgentEngineProvider.cs)
 - [目录服务](../src/OpenAgent.Router/Routing/AgentCatalogService.cs)、[ACL 服务](../src/OpenAgent.Router/Security/AgentVisibilityService.cs)
 - [会话解析](../src/OpenAgent.Router/Routing/ConversationProviderResolver.cs)、[亲和记录](../src/OpenAgent.Router/Models/ConversationProviderAffinity.cs)、[转发器](../src/OpenAgent.Router/Endpoints/AgentForwarder.cs)
 - [运行时注册](../src/OpenAgent.Router/Extensions/RouterServiceCollectionExtensions.cs)、[缓存策略](../src/OpenAgent.Router/Middleware/RouterCachePolicy.cs)、[幂等中间件](../src/OpenAgent.Router/Middleware/IdempotencyMiddleware.cs)

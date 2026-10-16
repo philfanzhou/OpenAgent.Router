@@ -4,7 +4,7 @@ internal sealed class DecisionModelOptions
 {
     internal const string SectionName = "RouterSettings:DecisionModel";
 
-    // The full jev decisions URL, e.g. http://192.168.20.31:7860/v1/decisions.
+    // The full jev decisions URL, e.g. http://192.168.2.159:7860/v1/decide.
     public string Endpoint { get; set; } = string.Empty;
     public string ApiKey { get; set; } = string.Empty;
     public string ApiKeyFile { get; set; } = string.Empty;

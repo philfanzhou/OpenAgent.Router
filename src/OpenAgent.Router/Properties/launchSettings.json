@@ -30,6 +30,18 @@
         "Authentication__Authority": "http://localhost:5003",
         "AUTH_SKIP_SSL_VALIDATION": "true"
       }
+    },
+    "mock-business": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "launchBrowser": false,
+      "applicationUrl": "http://localhost:5001",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "RouterSettings__AgentProviders__Providers__1__Id": "business-mock",
+        "RouterSettings__AgentProviders__Providers__1__Type": "OpenAgentEngine",
+        "RouterSettings__AgentProviders__Providers__1__Settings__BaseUrl": "http://localhost:5290"
+      }
     }
   }
 }

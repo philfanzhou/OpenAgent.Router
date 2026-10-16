@@ -5,7 +5,7 @@ Router 从本仓库独立构建，不引用或打包 Engine。运行时通过 HT
 ## 请求规则
 
 - 不带会话 ID：Router 生成 UUID，选定 Agent 后先持久化绑定，再转发业务请求。
-- 显式 `context.agentId` / `X-Agent-Id` / `X-Gina-Agent-Id`：验证权限与可用性后直接使用，不调用模型。
+- 显式 `context.agentId` / `X-Agent-Id`：验证权限与可用性后直接使用，不调用模型。
 - 未显式指定 Agent：用 `message` 与当前授权候选调用专用模型；即使只有一个候选也调用。空白 `message` 返回 400。
 - 带会话 ID：从绑定取得原 Provider、Agent 和用户，重新检查权限和可用性；不再调用模型。指定不同 Agent 返回 409。
 - 未知、过期、删除、其他用户或其他租户的会话 ID 返回 404，不探测 Provider，不隐式创建。
@@ -29,7 +29,7 @@ Router 不承诺跨故障的业务执行恰好一次。请求已发送或流已�
 
 ## 模型与候选
 
-`RouterSettings:DecisionModel:Endpoint` 是 jev 决策服务的完整 URL，例如 `http://192.168.20.31:7860/v1/decisions`；不自动拼接路径。Router 发送一个 `choice` 问题：`state` 为用户消息，`criteria` 的键为候选 Agent ID、值为其描述（无描述则用名称）。
+`RouterSettings:DecisionModel:Endpoint` 是 jev 决策服务的完整 URL，例如 `http://192.168.2.159:7860/v1/decide`；不自动拼接路径。Router 发送一个 `choice` 问题：`state` 为用户消息，`criteria` 的键为候选 Agent ID、值为其描述（无描述则用名称）。
 
 模型只接收 `message` 和过滤后的候选 ID、名称、描述。使用 Router 专用凭据，不传用户的认证令牌或执行模型 `llmProfileId`。模型需在 `answers.agent` 返回：
 
@@ -41,7 +41,7 @@ Router 校验候选成员、完整 JSON、有限置信度及阈值。模型网�
 
 OpenAgentEngine 目录仅接受当前租户的 `Published` Agent（共享枚举值 2）。ACL 进一步限制用户访问，Redis 查询失败或 ACL 数据损坏返回 503；不长期缓存 ACL，因此撤销权限在下一次请求生效。未设置 ACL 的已发布 Agent 视为租户内公开。
 
-首版完整支持接受调用方会话 ID 的 OpenAgentEngine。Gina 默认不进入候选；只有确认对方接受并复用 `X-Gina-Session-Id` 后，才可在 Provider Settings 设置 `SupportsRouterConversationIds=true`。Router 会用自己的会话 ID 覆盖该头，不实现下游原生会话 ID 的自动映射。Gina 不支持的会话查询等操作返回 501。
+Router 只内置 `OpenAgentEngine` 这一种 Provider 协议。第三方业务系统作为下游时，按该协议提供 Agent 目录（`AgentListPath`，返回 `AgentSummary` 数组）、会话查询（`ConversationPath`）与聊天（`ChatPath`）接口，由下游适配，不在 Router 中增加专用适配器。Router 签发会话 ID 并通过 `X-Conversation-Id` 和请求体传给下游。
 
 同一 Provider 的多个 Engine 实例必须具有相同 Agent 目录和共享会话存储；实例发现按 `chat` 能力与会话哈希选择，不按 Agent 部署位置调度。不同 Agent 部署集合应配置为不同 Provider，并设置各自 `BaseUrl`。所有 Provider 的 Agent ID 必须唯一，新会话目录冲突返回 409。
 

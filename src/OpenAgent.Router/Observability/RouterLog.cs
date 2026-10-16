@@ -209,9 +209,6 @@ internal static partial class RouterLog
     [LoggerMessage(EventId = 3045, Level = LogLevel.Information, Message = "Provider forwarding response. ProviderId={ProviderId}, Action={Action}, StatusCode={StatusCode}, Headers={Headers}, TraceId={TraceId}")]
     public static partial void ProviderForwardingResponse(ILogger logger, string providerId, string action, int statusCode, string headers, string traceId);
 
-    [LoggerMessage(EventId = 3046, Level = LogLevel.Information, Message = "Gina deterministic intent selection. ProviderId={ProviderId}, IntentAgentId={IntentAgentId}, SelectedAgentId={SelectedAgentId}, CandidateCount={CandidateCount}")]
-    public static partial void GinaIntentSelection(ILogger logger, string providerId, string intentAgentId, string? selectedAgentId, int candidateCount);
-
     [LoggerMessage(EventId = 3047, Level = LogLevel.Debug, Message = "Provider forwarding target resolved. ProviderId={ProviderId}, Action={Action}, Uri={Uri}, TenantId={TenantId}, ConversationId={ConversationId}")]
     public static partial void ProviderForwardingTargetResolved(ILogger logger, string providerId, string? action, string uri, string? tenantId, string? conversationId);
 
