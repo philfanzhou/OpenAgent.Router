@@ -58,7 +58,7 @@ internal sealed class AgentForwarder(
                     Stopwatch.GetElapsedTime(forwardingStarted),
                     succeeded: false);
             }
-            await AgentProblemDetails.WriteAsync(
+            await RouterProblem.WriteAsync(
                 context,
                 RouterProblem.From(new AgentRoutingException(
                     StatusCodes.Status503ServiceUnavailable,

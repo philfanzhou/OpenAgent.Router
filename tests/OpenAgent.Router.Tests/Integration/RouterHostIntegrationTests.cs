@@ -54,6 +54,8 @@ public sealed class RouterHostIntegrationTests : IClassFixture<RouterHostFixture
         using var response = await client.PostAsJsonAsync("/v1/chat/completions", new { model = "default", messages = Array.Empty<object>() });
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("authentication_error", body.RootElement.GetProperty("error").GetProperty("type").GetString());
     }
 
     [Theory]
@@ -164,6 +166,8 @@ public sealed class RouterHostIntegrationTests : IClassFixture<RouterHostFixture
         using var response = await client.SendAsync(unknown);
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        using var error = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("conversation_not_found", error.RootElement.GetProperty("error").GetProperty("code").GetString());
         Assert.Equal(before, _fixture.PrimaryEngine.ChatRequestCount);
         Assert.Equal(decisions, _fixture.PrimaryEngine.DecisionCount);
     }

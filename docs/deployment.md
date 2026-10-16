@@ -20,6 +20,16 @@ Router 对客户端暴露标准接口：`POST /v1/chat/completions`（OpenAI Cha
 
 响应头返回 `X-Session-Id`、`X-Chat-Id` 和 `X-OpenAgent-Selected-Agent-Id`。HTTP 和 SSE 均在响应开始前确定绑定。需要显式续接时，下一次请求带上 `X-Session-Id`。
 
+## 错误响应
+
+`/v1/*` 上 Router 自己产生的所有错误（认证、路由、限流、幂等、转发失败、未处理异常）使用 OpenAI 的错误信封，官方 SDK 可直接解析：
+
+```json
+{"error":{"message":"Conversation was not found","type":"invalid_request_error","param":null,"code":"conversation_not_found","trace_id":"..."}}
+```
+
+`type` 由状态码决定：401 `authentication_error`、403 `permission_error`、429 `rate_limit_error`、5xx `server_error`，其余 `invalid_request_error`；`code` 是 Router 的错误符号（snake_case）。未处理异常的 500 只返回通用文案，细节只写日志。下游自己返回的错误（含其 4xx/5xx 响应体）原样透传。`/v1/messages` 同样使用此信封，Anthropic SDK 能读到状态码和 `error.message`，但不是 Anthropic 原生的 `{"type":"error",...}` 形态。其他路径（`/api/v1/*`）仍为 problem+json。
+
 聊天入口不使用普通查询响应缓存。相同的首条消息、不同请求会创建不同会话；需要重试去重时发送 `Idempotency-Key`。JSON 非流式请求在有效期内重放成功响应及会话、聊天 ID、Agent 响应头；重放前重新检查会话授权。重复的 `"stream": true` 请求返回 409 和原会话信息，不重放 SSE 内容。幂等键与租户、用户、路径和请求摘要关联，修改请求后复用同一键返回 409；进行中的重复请求返回 `Retry-After: 1`。表单请求不提供幂等重放。
 
 Router 不承诺跨故障的业务执行恰好一次。请求已发送或流已开始后，不自动改投其他 Agent。发生响应丢失时优先使用已返回的会话 ID；下游的业务副作用仍应有自己的幂等保护。

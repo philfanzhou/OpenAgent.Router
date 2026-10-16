@@ -18,12 +18,12 @@ internal static class ModelCatalogEndpointHandler
     {
         if (!userContext.IsAuthenticated)
         {
-            return TypedResults.Problem(AgentProblemDetails.AuthenticationRequired(
+            return RouterProblem.Result(AgentProblemDetails.AuthenticationRequired(
                 "Authentication is required to list models.", context));
         }
         if (string.IsNullOrWhiteSpace(userContext.TenantId))
         {
-            return TypedResults.Problem(RouterProblem.From(new AgentRoutingException(
+            return RouterProblem.Result(RouterProblem.From(new AgentRoutingException(
                 StatusCodes.Status400BadRequest, RouterErrorCodes.InvalidTenant, "Tenant ID is required"), context));
         }
 
@@ -39,7 +39,7 @@ internal static class ModelCatalogEndpointHandler
         }
         catch (AgentRoutingException exception)
         {
-            return TypedResults.Problem(RouterProblem.From(exception, context));
+            return RouterProblem.Result(RouterProblem.From(exception, context));
         }
     }
 

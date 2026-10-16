@@ -35,7 +35,7 @@ internal static class ForwardingErrorHandler
         }
 
         bool timedOut = error == ForwarderError.RequestTimedOut;
-        return TypedResults.Problem(AgentProblemDetails.Create(
+        return RouterProblem.Result(AgentProblemDetails.Create(
             $"{AgentProblemDetails.TypePrefix}/{(timedOut ? "gateway-timeout" : "service-unavailable")}",
             timedOut ? "GatewayTimeout" : "ServiceUnavailable",
             timedOut ? StatusCodes.Status504GatewayTimeout : StatusCodes.Status503ServiceUnavailable,

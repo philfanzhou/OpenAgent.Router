@@ -72,6 +72,7 @@ var app = builder.Build();
 
 app.UseAgentHost(builder.Configuration);
 app.UseAgentErrorHandling();
+app.UseMiddleware<OpenAiExceptionMiddleware>();
 app.UseMiddleware<JwtUserContextMiddleware>();
 app.UseWhen(
     context => ChatProtocols.IsChatPath(context.Request.Path),

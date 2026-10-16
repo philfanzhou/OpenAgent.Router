@@ -109,7 +109,7 @@ internal sealed class IdempotencyMiddleware(
                 }
                 catch (AgentRoutingException exception)
                 {
-                    await AgentProblemDetails.WriteAsync(context, RouterProblem.From(exception, context)).ConfigureAwait(false);
+                    await RouterProblem.WriteAsync(context, RouterProblem.From(exception, context)).ConfigureAwait(false);
                     return;
                 }
             }
@@ -243,16 +243,13 @@ internal sealed class IdempotencyMiddleware(
         int statusCode,
         string detail)
     {
-        byte[] body = JsonSerializer.SerializeToUtf8Bytes(new
-        {
-            title = "Idempotency conflict",
-            status = statusCode,
-            detail
-        });
-        context.Response.StatusCode = statusCode;
-        context.Response.ContentType = "application/problem+json";
-        context.Response.ContentLength = body.Length;
-        await context.Response.Body.WriteAsync(body, context.RequestAborted).ConfigureAwait(false);
+        await RouterProblem.WriteAsync(context, AgentProblemDetails.Create(
+            $"{AgentProblemDetails.TypePrefix}/idempotency-conflict",
+            "Idempotency conflict",
+            statusCode,
+            detail,
+            context.Request.Path,
+            AgentProblemDetails.ResolveTraceId(context)), context.RequestAborted).ConfigureAwait(false);
     }
 
     private async Task ReleaseSafelyAsync(

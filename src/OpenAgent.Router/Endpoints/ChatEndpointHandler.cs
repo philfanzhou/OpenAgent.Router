@@ -32,7 +32,7 @@ internal static class ChatEndpointHandler
             RouterLog.UnauthenticatedRequest(
                 logger, protocol.ToString(), context.Request.Method, context.Request.Path,
                 Activity.Current?.Id ?? context.TraceIdentifier);
-            return TypedResults.Problem(AgentProblemDetails.AuthenticationRequired(
+            return RouterProblem.Result(AgentProblemDetails.AuthenticationRequired(
                 "Authentication is required to chat.", context));
         }
 
@@ -64,18 +64,18 @@ internal static class ChatEndpointHandler
         }
         catch (AgentRoutingException exception)
         {
-            return TypedResults.Problem(RouterProblem.From(exception, context));
+            return RouterProblem.Result(RouterProblem.From(exception, context));
         }
         if (selection == null)
         {
-            return TypedResults.Problem(RouterProblem.From(new AgentRoutingException(
+            return RouterProblem.Result(RouterProblem.From(new AgentRoutingException(
                 StatusCodes.Status503ServiceUnavailable,
                 RouterErrorCodes.NoAgentAvailable,
                 "No Agent could be selected"), context));
         }
         if (!providers.TryGet(selection.ProviderId, out IAgentProvider? provider) || provider == null)
         {
-            return TypedResults.Problem(RouterProblem.From(new AgentRoutingException(
+            return RouterProblem.Result(RouterProblem.From(new AgentRoutingException(
                 StatusCodes.Status503ServiceUnavailable,
                 RouterErrorCodes.AgentProviderUnavailable,
                 "Agent Provider is unavailable"), context));

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using OpenAgent.Contracts.Security;
+using OpenAgent.Router.Endpoints;
 using OpenAgent.Router.Hosting.Errors;
 using OpenAgent.Router.Observability;
 
@@ -30,7 +31,7 @@ internal sealed class RateLimitingMiddleware(RequestDelegate next, ILogger<RateL
             int retryAfterSeconds = Math.Max((int)Math.Ceiling(decision.RetryAfter.TotalSeconds), 1);
             context.Response.Headers.RetryAfter = retryAfterSeconds.ToString(
                 System.Globalization.CultureInfo.InvariantCulture);
-            await AgentProblemDetails.WriteAsync(
+            await RouterProblem.WriteAsync(
                 context,
                 AgentProblemDetails.RateLimited(
                     $"Too many requests. Retry after {retryAfterSeconds} seconds.", context),
