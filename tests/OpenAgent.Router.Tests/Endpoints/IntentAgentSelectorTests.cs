@@ -77,6 +77,15 @@ public class IntentAgentSelectorTests
     }
 
     [Fact]
+    public async Task InputOverModelContext_ReturnsNoSelectionWithoutCallingModel()
+    {
+        var handler = new Handler();
+        var selector = Create(handler);
+        Assert.Null(await selector.SelectAsync(Context(), new string('x', 8000), Candidates, CancellationToken.None));
+        Assert.Null(handler.RequestBody);
+    }
+
+    [Fact]
     public async Task OversizedResponse_ReturnsNoSelection()
     {
         var selector = Create(new Handler { Content = "{\"pad\":\"" + new string('x', 20000) + "\"}" });
