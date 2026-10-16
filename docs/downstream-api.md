@@ -39,6 +39,10 @@ Router 是带 Agent 选择和会话保持的标准协议网关。客户端与下
 
 至少实现 `GET /v1/models` 和 `Protocols` 中声明的聊天接口。聊天接口按官方格式收发，包括 `"stream": true` 时的官方 SSE 事件，Router 不解析响应体。
 
+### 2.0 就绪探针：`GET /ready`
+
+Router 的 `/ready` 会探测每个下游的 `GET /ready`（路径可用 `RouterSettings:ServiceDiscovery:ReadinessPath` 改），2xx 才算就绪。下游不提供时，Router 的就绪检查恒为 503，Compose / 编排的健康检查会一直失败。
+
 ### 2.1 Agent 目录：`GET /v1/models`
 
 返回官方的模型列表，每个模型就是一个 Agent：

@@ -15,6 +15,7 @@ var agents = new[]
 var app = WebApplication.CreateBuilder(args).Build();
 app.Urls.Add("http://localhost:5290");
 
+app.MapGet("/ready", () => Results.Ok());
 app.MapGet("/v1/models", () => new { @object = "list", data = agents });
 
 // Echo the routing facts back. Streaming answers with plain SSE chunks, enough to exercise forwarding.
