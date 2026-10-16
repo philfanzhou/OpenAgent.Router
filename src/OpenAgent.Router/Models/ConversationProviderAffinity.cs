@@ -13,4 +13,5 @@ internal sealed record ConversationProviderAffinity(
     string? UserId = null,
     int Version = 1,
     DateTimeOffset? ExpiresAt = null,
-    bool Deleted = false);
+    bool Deleted = false,
+    string? SessionId = null);

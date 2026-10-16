@@ -32,7 +32,7 @@ public class IntentAgentSelectorTests
         var handler = new Handler();
         var selector = Create(handler);
         string? result = await selector.SelectAsync(new AgentProviderRequestContext(
-            new AgentUserContext { UserId = "user", TenantId = "tenant" }, "Bearer caller-secret", "execution-profile"),
+            new AgentUserContext { UserId = "user", TenantId = "tenant" }, "Bearer caller-secret"),
             "find invoice", Candidates, CancellationToken.None);
         Assert.Equal("finance", result);
         Assert.Equal("Bearer routing-secret", handler.Authorization);
@@ -42,8 +42,7 @@ public class IntentAgentSelectorTests
         Assert.Equal("choice", question.GetProperty("type").GetString());
         Assert.Equal("Handles invoices", question.GetProperty("criteria").GetProperty("finance").GetString());
         Assert.DoesNotContain("caller-secret", handler.RequestBody);
-        Assert.DoesNotContain("execution-profile", handler.RequestBody);
-    }
+            }
 
     [Theory]
     [InlineData("not json")]

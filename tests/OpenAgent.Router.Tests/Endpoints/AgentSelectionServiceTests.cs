@@ -55,7 +55,6 @@ public class AgentSelectionServiceTests
     {
         var selector = new StubSelector("general");
         var provider = new StubProvider("engine", [Agent("general")]);
-        provider.Conversations["legacy"] = AgentProviderConversationStatus.Found;
         var service = CreateService([provider], selector);
         var exception = await Assert.ThrowsAsync<AgentRoutingException>(() =>
             service.SelectAsync("hello", "legacy", "general", CancellationToken.None));
@@ -171,13 +170,7 @@ public class AgentSelectionServiceTests
         IReadOnlyList<AgentSummary> agents) : IAgentProvider
     {
         public string Id => id;
-        public bool SupportsRouterConversationIds => true;
-
-        public Dictionary<string, AgentProviderConversationStatus> Conversations { get; } =
-            new(StringComparer.OrdinalIgnoreCase);
-
-        public AgentProviderConversationStatus DefaultConversationStatus { get; init; } =
-            AgentProviderConversationStatus.NotFound;
+        public bool Supports(ChatProtocol protocol) => true;
 
         public string? LastTenantId { get; private set; }
 
@@ -186,32 +179,10 @@ public class AgentSelectionServiceTests
             CancellationToken cancellationToken) =>
             Task.FromResult(new AgentProviderCatalog(agents));
 
-        public Task<AgentProviderConversationStatus> ResolveConversationAsync(
-            AgentProviderRequestContext requestContext,
-            string conversationId,
-            CancellationToken cancellationToken)
-        {
-            LastTenantId = requestContext.UserContext.TenantId;
-            AgentProviderConversationStatus status = Conversations.TryGetValue(
-                conversationId,
-                out AgentProviderConversationStatus configured)
-                ? configured
-                : DefaultConversationStatus;
-            return Task.FromResult(status);
-        }
-
-        public Task<IntentRecognitionResult?> RecognizeIntentAsync(
-            AgentProviderRequestContext requestContext,
-            string intentAgentId,
-            IReadOnlyList<AgentSummary> candidates,
-            string message,
-            CancellationToken cancellationToken) =>
-            Task.FromResult<IntentRecognitionResult?>(null);
-
         public Task<AgentForwardingTarget?> ResolveForwardingAsync(
-            string? action,
+            ChatProtocol protocol,
             string? tenantId,
-            string? conversationId,
+            string? sessionId,
             CancellationToken cancellationToken) =>
             Task.FromResult<AgentForwardingTarget?>(null);
 

@@ -24,7 +24,7 @@ internal sealed class AgentCatalogService(
         foreach (IAgentProvider provider in providers.Providers)
         {
             if (providerId != null && !string.Equals(providerId, provider.Id, StringComparison.OrdinalIgnoreCase)) continue;
-            if (!provider.SupportsRouterConversationIds) continue;
+            if (requestContext.Protocol is { } protocol && !provider.Supports(protocol)) continue;
             AgentProviderCatalog catalog;
             try
             {

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using OpenAgent.Contracts.Security;
 using OpenAgent.Router.Hosting;
 using OpenAgent.Router.Endpoints;
+using OpenAgent.Router.Models;
 using OpenAgent.Router.Security;
 using Yarp.ReverseProxy.Forwarder;
 
@@ -16,121 +17,32 @@ public static class RouterEndpointExtensions
             TimeSpan.FromSeconds(15)));
         var requestConfig = new ForwarderRequestConfig { ActivityTimeout = TimeSpan.FromSeconds(100) };
 
-        app.MapPost("/api/v1/agent/chat/{*action}", (
-            string? action,
-            HttpContext context,
-            IAgentProviderRegistry providers,
-            IAgentForwarder agentForwarder,
-            IAgentUserContext userContext,
-            ILogger<Program> logger,
-            CancellationToken cancellationToken) =>
-            ChatEndpointHandler.HandleAsync(
-                action, context, providers, agentForwarder, userContext, logger, cancellationToken))
-            .AddEndpointFilter<AgentSelectionFilter>()
-            .WithName("RouterChat")
-            .WithTags("Chat");
+        foreach (ChatProtocol protocol in Enum.GetValues<ChatProtocol>())
+        {
+            app.MapPost(ChatProtocols.Path(protocol), (
+                HttpContext context,
+                IAgentSelectionService selectionService,
+                ChatSessionTracker sessions,
+                IAgentProviderRegistry providers,
+                IAgentForwarder agentForwarder,
+                IAgentUserContext userContext,
+                ILogger<Program> logger,
+                CancellationToken cancellationToken) =>
+                ChatEndpointHandler.HandleAsync(
+                    protocol, context, selectionService, sessions, providers, agentForwarder,
+                    userContext, logger, cancellationToken))
+                .WithName($"RouterChat{protocol}")
+                .WithTags("Chat");
+        }
 
-        app.MapGet("/api/v1/agent/agents", (
+        app.MapGet("/v1/models", (
             IAgentCatalogService catalog,
             IAgentUserContext userContext,
             HttpContext context,
             CancellationToken cancellationToken) =>
-            AgentCatalogEndpointHandler.HandleAsync(
-                catalog,
-                userContext,
-                context,
-                cancellationToken))
-            .WithName("RouterListAgents")
-            .WithTags("Agent Catalog");
-        // Compatibility alias retained for clients that predate /api/v1/agent/agents;
-        // hidden from OpenAPI docs to avoid a duplicate operation.
-        app.MapGet("/api/v1/agents", (
-            IAgentCatalogService catalog,
-            IAgentUserContext userContext,
-            HttpContext context,
-            CancellationToken cancellationToken) =>
-            AgentCatalogEndpointHandler.HandleAsync(
-                catalog,
-                userContext,
-                context,
-                cancellationToken))
-            .ExcludeFromDescription();
-        app.MapGet("/api/v1/agent/conversations", (
-            HttpContext context, IHttpForwarder forwarder, IAgentUserContext userContext,
-            IRouteTable routeTable, ILogger<Program> logger, int skip = 0, int take = 20) =>
-            GetEndpointHandler.HandleAsync(
-                context, forwarder, userContext, routeTable, logger, httpClient, requestConfig,
-                $"/api/v1/agent/conversations?skip={skip}&take={take}", conversationIdFromHeader: true))
-            .WithName("RouterListConversations")
-            .WithTags("Conversations");
-        app.MapGet("/api/v1/agent/conversations/search", (
-            HttpContext context, IHttpForwarder forwarder, IAgentUserContext userContext,
-            IRouteTable routeTable, ILogger<Program> logger,
-            string keyword = "", int skip = 0, int take = 20) =>
-            GetEndpointHandler.HandleAsync(
-                context, forwarder, userContext, routeTable, logger, httpClient, requestConfig,
-                $"/api/v1/agent/conversations/search?keyword={Uri.EscapeDataString(keyword)}&skip={skip}&take={take}",
-                conversationIdFromHeader: true))
-            .WithName("RouterSearchConversations")
-            .WithTags("Conversations");
-        app.MapMethods(
-            "/api/v1/agent/conversations/{conversationId}",
-            [HttpMethods.Get, HttpMethods.Delete],
-            (
-                HttpContext context,
-                IHttpForwarder forwarder,
-                IAgentUserContext userContext,
-                IRouteTable routeTable,
-                ILogger<Program> logger) =>
-                GatewayProxyHandler.HandleAsync(
-                    context,
-                    forwarder,
-                    userContext,
-                    routeTable,
-                    logger,
-                    httpClient,
-                    requestConfig,
-                    requireAuthentication: true))
-            .WithName("RouterGetOrDeleteConversation")
-            .WithTags("Conversations");
-        app.MapPost(
-            "/api/v1/agent/conversations/{conversationId}/compact",
-            (
-                HttpContext context,
-                IHttpForwarder forwarder,
-                IAgentUserContext userContext,
-                IRouteTable routeTable,
-                ILogger<Program> logger) =>
-                GatewayProxyHandler.HandleAsync(
-                    context,
-                    forwarder,
-                    userContext,
-                    routeTable,
-                    logger,
-                    httpClient,
-                    requestConfig,
-                    requireAuthentication: true))
-            .WithName("RouterCompactConversation")
-            .WithTags("Conversations");
-        app.MapGet(
-            "/api/v1/agent/conversations/{conversationId}/llm-interactions",
-            (
-                HttpContext context,
-                IHttpForwarder forwarder,
-                IAgentUserContext userContext,
-                IRouteTable routeTable,
-                ILogger<Program> logger) =>
-                GatewayProxyHandler.HandleAsync(
-                    context,
-                    forwarder,
-                    userContext,
-                    routeTable,
-                    logger,
-                    httpClient,
-                    requestConfig,
-                    requireAuthentication: true))
-            .WithName("RouterListLlmInteractions")
-            .WithTags("Conversations");
+            ModelCatalogEndpointHandler.HandleAsync(catalog, userContext, context, cancellationToken))
+            .WithName("RouterListModels")
+            .WithTags("Models");
         app.MapGet("/api/v1/agent/me", (
             HttpContext context,
             IHttpForwarder forwarder,

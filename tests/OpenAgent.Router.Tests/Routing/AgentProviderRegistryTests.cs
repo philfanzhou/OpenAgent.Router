@@ -59,31 +59,17 @@ public class AgentProviderRegistryTests
     private sealed class StubProvider(string id) : IAgentProvider
     {
         public string Id => id;
-        public bool SupportsRouterConversationIds => true;
+        public bool Supports(ChatProtocol protocol) => true;
 
         public Task<AgentProviderCatalog> GetAgentsAsync(
             AgentProviderRequestContext requestContext,
             CancellationToken cancellationToken) =>
             Task.FromResult(new AgentProviderCatalog([]));
 
-        public Task<AgentProviderConversationStatus> ResolveConversationAsync(
-            AgentProviderRequestContext requestContext,
-            string conversationId,
-            CancellationToken cancellationToken) =>
-            Task.FromResult(AgentProviderConversationStatus.NotFound);
-
-        public Task<IntentRecognitionResult?> RecognizeIntentAsync(
-            AgentProviderRequestContext requestContext,
-            string intentAgentId,
-            IReadOnlyList<AgentSummary> agents,
-            string message,
-            CancellationToken cancellationToken) =>
-            Task.FromResult<IntentRecognitionResult?>(null);
-
         public Task<AgentForwardingTarget?> ResolveForwardingAsync(
-            string? action,
+            ChatProtocol protocol,
             string? tenantId,
-            string? conversationId,
+            string? sessionId,
             CancellationToken cancellationToken) =>
             Task.FromResult<AgentForwardingTarget?>(null);
 

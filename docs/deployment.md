@@ -4,26 +4,23 @@ Router 从本仓库独立构建，不引用或打包 Engine。运行时通过 HT
 
 ## 请求规则
 
-- 不带会话 ID：Router 生成 UUID，选定 Agent 后先持久化绑定，再转发业务请求。
-- 显式 `context.agentId` / `X-Agent-Id`：验证权限与可用性后直接使用，不调用模型。
-- 未显式指定 Agent：用 `message` 与当前授权候选调用专用模型；即使只有一个候选也调用。空白 `message` 返回 400。
-- 带会话 ID：从绑定取得原 Provider、Agent 和用户，重新检查权限和可用性；不再调用模型。指定不同 Agent 返回 409。
-- 未知、过期、删除、其他用户或其他租户的会话 ID 返回 404，不探测 Provider，不隐式创建。
-- 请求体和请求头中空白 ID 视为未提供；多个有效来源冲突返回 400。转发时把最终 ID 和 Agent 同时规范化到请求体和请求头，保留 `fileIds`、执行模型 profile 和其他上下文。
+Router 对客户端暴露标准接口：`POST /v1/chat/completions`（OpenAI Chat Completions）、`POST /v1/responses`（OpenAI Responses）、`POST /v1/messages`（Anthropic Messages）和 `GET /v1/models`。请求体与响应体保持各家官方格式，Router 只读取路由所需字段，只改写请求里的 `model`。接入细节见[下游接入接口](downstream-api.md)。
 
-首次请求：
+- `model` 是 Agent ID；填保留值 `auto`（或不填）时，Router 取最后一条用户消息，用专用决策模型从当前授权候选里选；即使只有一个候选也调用。没有可用的用户文本返回 400。
+- `model` 为具体 Agent ID 时，验证权限与可用性后直接使用，不调用模型。
+- Router 为每个会话生成会话 ID（`X-Session-Id`），为每次请求生成聊天 ID（`X-Chat-Id`，前缀 `chatcmpl-` / `resp_` / `msg_`）。两者随请求头传给下游，同时在响应头返回给客户端；CORS 暴露这两个头和 `X-OpenAgent-Selected-Agent-Id`。客户端自带的 `X-Chat-Id` 会被覆盖。
+- 续接已有会话，按顺序识别：请求头 `X-Session-Id`；Responses 的 `previous_response_id`（即 Router 返回过的聊天 ID）；Chat Completions / Messages 在历史里已有 assistant 消息时，按"该用户首条用户消息"的指纹找到会话。
+- 已有会话从绑定取得 Provider 和 Agent，重新检查权限和可用性，不再调用模型；`model` 指定不同 Agent 返回 409。未知、过期、其他用户或其他租户的会话 ID 返回 404，不隐式创建。
 
-```json
-{"message":"查一下这份发票对应的订单"}
-```
-
-响应通过 `X-Conversation-Id` 返回会话 ID，通过 `X-OpenAgent-Selected-Agent-Id` 返回 Agent；CORS 暴露这两个头。HTTP 和 SSE 均在响应开始前确定绑定。客户端后续请求携带 `context.conversationId` 或 `X-Conversation-Id`：
+首次请求（客户端不带任何会话信息）：
 
 ```json
-{"message":"再按月份汇总","context":{"conversationId":"上次返回的会话 ID"}}
+{"model":"auto","messages":[{"role":"user","content":"查一下这份发票对应的订单"}]}
 ```
 
-聊天入口不使用普通查询响应缓存。相同 prompt、不同请求会创建不同会话；需要重试去重时发送 `Idempotency-Key`。JSON 非流式请求在有效期内重放成功响应及会话、Agent 响应头；重放前重新检查会话授权。重复流请求返回 409 和原会话信息，不重放 SSE 内容。幂等键与租户、用户、路径和请求摘要关联，修改请求后复用同一键返回 409；进行中的重复请求返回 `Retry-After: 1`。表单请求不提供幂等重放。
+响应头返回 `X-Session-Id`、`X-Chat-Id` 和 `X-OpenAgent-Selected-Agent-Id`。HTTP 和 SSE 均在响应开始前确定绑定。需要显式续接时，下一次请求带上 `X-Session-Id`。
+
+聊天入口不使用普通查询响应缓存。相同的首条消息、不同请求会创建不同会话；需要重试去重时发送 `Idempotency-Key`。JSON 非流式请求在有效期内重放成功响应及会话、聊天 ID、Agent 响应头；重放前重新检查会话授权。重复的 `"stream": true` 请求返回 409 和原会话信息，不重放 SSE 内容。幂等键与租户、用户、路径和请求摘要关联，修改请求后复用同一键返回 409；进行中的重复请求返回 `Retry-After: 1`。表单请求不提供幂等重放。
 
 Router 不承诺跨故障的业务执行恰好一次。请求已发送或流已开始后，不自动改投其他 Agent。发生响应丢失时优先使用已返回的会话 ID；下游的业务副作用仍应有自己的幂等保护。
 
@@ -31,7 +28,7 @@ Router 不承诺跨故障的业务执行恰好一次。请求已发送或流已�
 
 `RouterSettings:DecisionModel:Endpoint` 是 jev 决策服务的完整 URL，例如 `http://192.168.2.159:7860/v1/decide`；不自动拼接路径。Router 发送一个 `choice` 问题：`state` 为用户消息，`criteria` 的键为候选 Agent ID、值为其描述（无描述则用名称）。
 
-模型只接收 `message` 和过滤后的候选 ID、名称、描述。使用 Router 专用凭据，不传用户的认证令牌或执行模型 `llmProfileId`。模型需在 `answers.agent` 返回：
+模型只接收最后一条用户消息和过滤后的候选 ID、名称、描述。使用 Router 专用凭据，不传用户的认证令牌。模型需在 `answers.agent` 返回：
 
 ```json
 {"type":"choice","choice":"finance","confidence":0.95}
@@ -41,7 +38,7 @@ Router 校验候选成员、完整 JSON、有限置信度及阈值。模型网�
 
 OpenAgentEngine 目录仅接受当前租户的 `Published` Agent（共享枚举值 2）。ACL 进一步限制用户访问，Redis 查询失败或 ACL 数据损坏返回 503；不长期缓存 ACL，因此撤销权限在下一次请求生效。未设置 ACL 的已发布 Agent 视为租户内公开。
 
-Router 只内置 `OpenAgentEngine` 这一种 Provider 协议。第三方业务系统作为下游时，按该协议提供 Agent 目录（`AgentListPath`，返回 `AgentSummary` 数组）、会话查询（`ConversationPath`）与聊天（`ChatPath`）接口，由下游适配，不在 Router 中增加专用适配器。Router 签发会话 ID 并通过 `X-Conversation-Id` 和请求体传给下游。
+Router 只内置 `OpenAgentEngine` 这一种 Provider 类型：下游用标准 OpenAI / Anthropic 接口提供 Agent，Agent ID 即 `model`；`GET /v1/models` 返回候选。第三方业务系统按[下游接入接口](downstream-api.md)适配，Router 不增加专用适配器。
 
 同一 Provider 的多个 Engine 实例必须具有相同 Agent 目录和共享会话存储；实例发现按 `chat` 能力与会话哈希选择，不按 Agent 部署位置调度。不同 Agent 部署集合应配置为不同 Provider，并设置各自 `BaseUrl`。所有 Provider 的 Agent ID 必须唯一，新会话目录冲突返回 409。
 
@@ -67,17 +64,15 @@ Router 只内置 `OpenAgentEngine` 这一种 Provider 协议。第三方业务�
 | `RouterSettings:Conversations:StorageTimeoutMs` | 2000 | 会话存储操作预算 |
 | `RouterSettings:Conversations:RetentionDays` | 30 | 绑定的固定保留时间，从创建时开始计算 |
 
-原 `IntentRecognition:ProviderId/AgentId` 不再用于选择链路；不需要配置 `intent-router`。客户端 `llmProfileId` 原样保留给任务执行，不决定 Router 使用哪个模型。
+原 `IntentRecognition:ProviderId/AgentId` 不再用于选择链路；不需要配置 `intent-router`。Router 不处理执行模型，`model` 之外的请求字段（`temperature`、工具等）原样交给下游。Engine 需接受透传的用户令牌并采用一致的租户解析。
 
-当前 Engine 的任务执行仍要求 LLM profile。可在对应 Provider 的 Settings 设置 `DefaultLlmProfileId`（Compose 中为 `ENGINE_LLM_PROFILE_ID`），Router 会通过 `X-OpenAgent-Llm-Profile-Id` 提供默认执行模型；客户端显式传入的执行 profile 优先。没有配置默认值时，客户端仍需携带执行 profile。上面的仅 `message` 示例以已配置服务端默认值为前提；此配置与 Router 的决策模型相互独立。Engine 还需接受透传的用户令牌并采用一致的租户解析。
-
-绑定通过 Redis `SET NX` 原子创建，包含版本、用户、Provider、Agent 和到期时间，转发失败也不换绑。过期会话返回 404。会话删除先保存墓碑，再转发 DELETE；即使下游删除失败，该 ID 也不能再次进入 chat 创建对话。清理下游残留数据由运维处理。旧版本仅包含 Provider、没有用户与 Agent 的绑定会被拒绝，升级后客户端应创建新会话。
+绑定通过 Redis `SET NX` 原子创建，包含版本、用户、Provider、Agent 和到期时间，转发失败也不换绑。过期会话返回 404。Router 不再提供会话列表、删除、压缩等接口，历史由客户端持有（标准协议每次带全量消息，或用 Responses 的 `previous_response_id`），下游数据清理由运维处理。旧版本仅包含 Provider、没有用户与 Agent 的绑定会被拒绝，升级后客户端应创建新会话。
 
 生产 Redis 应持久化、备份并使用适合环境的访问控制。示例开启 AOF、`noeviction` 且不暴露 Redis 宿主机端口；它不是高可用集群模板。Router 可以配置静态实例地址作为服务发现回退，但 Redis 会话状态或授权不可用时不能绕过。
 
 ## 使用 Docker Compose
 
-1. 复制 `deploy/.env.example` 到 `deploy/.env`，填写身份服务 Authority、Audience、ClientId，Engine 的容器可达地址、默认执行 profile，以及专用决策模型 Endpoint。
+1. 复制 `deploy/.env.example` 到 `deploy/.env`，填写身份服务 Authority、Audience、ClientId，下游的容器可达地址，以及专用决策模型 Endpoint。
 2. 将专用模型密钥写入仓库之外的文件，设置 `DECISION_MODEL_API_KEY_FILE` 指向该文件；文件必须允许容器的非 root 用户读取。无鉴权网关可使用空文件。
 3. 从仓库根目录执行：
 

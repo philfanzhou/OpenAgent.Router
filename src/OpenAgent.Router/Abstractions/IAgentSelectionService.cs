@@ -10,5 +10,5 @@ internal interface IAgentSelectionService
         string? explicitAgentId,
         CancellationToken cancellationToken,
         string? authenticationToken = null,
-        string? llmProfileId = null);
+        ChatProtocol? protocol = null);
 }

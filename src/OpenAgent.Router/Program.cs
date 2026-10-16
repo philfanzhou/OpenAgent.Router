@@ -4,6 +4,7 @@ using OpenAgent.Router.Hosting.Authentication;
 using OpenAgent.Router;
 using OpenAgent.Router.Security;
 using OpenAgent.Router.Middleware;
+using OpenAgent.Router.Models;
 using System.Security.Claims;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -73,7 +74,7 @@ app.UseAgentHost(builder.Configuration);
 app.UseAgentErrorHandling();
 app.UseMiddleware<JwtUserContextMiddleware>();
 app.UseWhen(
-    context => context.Request.Path.StartsWithSegments("/api/v1/agent/chat"),
+    context => ChatProtocols.IsChatPath(context.Request.Path),
     branch =>
     {
         branch.UseMiddleware<RateLimitingMiddleware>();

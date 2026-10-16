@@ -48,6 +48,7 @@ public static class RouterServiceCollectionExtensions
         services.AddSingleton<IIntentAgentSelector, IntentAgentSelector>();
         services.AddSingleton<DecisionModelStatus>();
         services.AddScoped<IAgentSelectionService, AgentSelectionService>();
+        services.AddSingleton<ChatSessionTracker>();
         services.AddSingleton(new RouterCacheSettings(configuration));
         services.AddSingleton<IIdempotencyStore, IdempotencyStore>();
         services.AddSingleton<IQueryCache, RouterQueryCache>();

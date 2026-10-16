@@ -34,17 +34,51 @@ internal sealed class ConversationProviderResolver(
         return affinity;
     }
 
+    public async Task<ConversationProviderAffinity?> TryResolveAsync(
+        AgentProviderRequestContext requestContext,
+        string conversationId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await ResolveAsync(requestContext, conversationId, cancellationToken).ConfigureAwait(false);
+        }
+        catch (AgentRoutingException exception) when (exception.Code == RouterErrorCodes.ConversationNotFound)
+        {
+            return null;
+        }
+    }
+
     public Task<ConversationProviderAffinity> BindAsync(
         AgentProviderRequestContext requestContext,
         string conversationId,
         string providerId,
         string agentId,
-        CancellationToken cancellationToken) => WithStorageTimeoutAsync(
+        CancellationToken cancellationToken,
+        string? sessionId = null) => WithStorageTimeoutAsync(
             token => store.BindAsync(RequireTenantId(requestContext), conversationId,
-                new ConversationProviderAffinity(providerId, ConversationAffinityState.Confirmed,
-                    agentId, requestContext.UserContext.UserId,
-                    ExpiresAt: DateTimeOffset.UtcNow.AddDays(options.Value.RetentionDays)), token),
+                NewAffinity(requestContext, providerId, agentId, sessionId), token),
             cancellationToken);
+
+    public Task OverwriteAsync(
+        AgentProviderRequestContext requestContext,
+        string conversationId,
+        string providerId,
+        string agentId,
+        string sessionId,
+        CancellationToken cancellationToken) => WithStorageTimeoutAsync(
+            async token =>
+            {
+                await store.SetAsync(RequireTenantId(requestContext), conversationId,
+                    NewAffinity(requestContext, providerId, agentId, sessionId), token).ConfigureAwait(false);
+                return true;
+            },
+            cancellationToken);
+
+    private ConversationProviderAffinity NewAffinity(AgentProviderRequestContext requestContext,
+        string providerId, string agentId, string? sessionId) =>
+        new(providerId, ConversationAffinityState.Confirmed, agentId, requestContext.UserContext.UserId,
+            ExpiresAt: DateTimeOffset.UtcNow.AddDays(options.Value.RetentionDays), SessionId: sessionId);
 
     private async Task<T> WithStorageTimeoutAsync<T>(Func<CancellationToken, Task<T>> action,
         CancellationToken cancellationToken)

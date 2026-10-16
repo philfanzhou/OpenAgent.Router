@@ -1,5 +1,7 @@
 # Router 独立容器部署与新会话智能选 Agent
 
+> 本文是早期需求与设计记录。请求协议已改为标准 OpenAI / Anthropic 接口，下文中的 `/api/v1/agent/*`、`context.conversationId`、`X-Conversation-Id` 已被取代，现行行为以[部署文档](deployment.md)和[下游接入接口](downstream-api.md)为准。
+
 状态：方案已确认，首版实现随本 PR 提交。下文现状分析记录实现前的基线；运行配置与已交付行为以[部署文档](deployment.md)为准。
 
 已确认：显式指定 Agent 跳过模型；会话 ID 由 Router 生成；未知会话 ID 直接返回 404，不探测归属、不隐式创建。采用 Router 专用决策模型连接及受控默认 Agent 回退。

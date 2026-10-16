@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using OpenAgent.Router.Models;
 using OpenAgent.Router.Observability;
 using StackExchange.Redis;
 
@@ -47,11 +48,11 @@ internal sealed class RouterReadyCheck : IHealthCheck
         if (_providers != null)
         {
             bool anyReady = false;
-            foreach (IAgentProvider provider in _providers.Providers.Where(provider => provider.SupportsRouterConversationIds))
+            foreach (IAgentProvider provider in _providers.Providers)
             {
                 for (int attempt = 0; attempt < 2; attempt++)
                 {
-                    var target = await provider.ResolveForwardingAsync(null, null, null, cancellationToken)
+                    var target = await provider.ResolveForwardingAsync(ChatProtocol.ChatCompletions, null, null, cancellationToken)
                         .ConfigureAwait(false);
                     if (target == null) break;
                     if (await _probe.IsReadyAsync(target.DestinationPrefix, cancellationToken).ConfigureAwait(false))

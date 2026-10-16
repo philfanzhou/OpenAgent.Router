@@ -1,9 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
-using System.Text.Json;
 using Microsoft.Extensions.Configuration;
-using OpenAgent.Contracts.Configuration;
-using OpenAgent.Contracts.Requests;
 using OpenAgent.Contracts.Routing;
 using OpenAgent.Contracts.Security;
 using OpenAgent.Router.Models;
@@ -14,180 +11,145 @@ namespace OpenAgent.Router.Tests.Providers;
 
 public class OpenAgentEngineProviderTests
 {
-    [Theory]
-    [InlineData(null, "server-profile")]
-    [InlineData("client-profile", "client-profile")]
-    public async Task ExecutionModelDefault_IsIndependentAndDoesNotOverrideClientHeader(string? supplied, string expected)
+    [Fact]
+    public async Task GetAgentsAsync_ReadsStandardModelListWithUserTokenAndServiceHeaders()
     {
-        var settings = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        var handler = new RecordingHandler();
+        using var provider = Create(handler, new Dictionary<string, string?>
         {
-            ["DefaultLlmProfileId"] = "server-profile"
-        }).Build();
-        using var provider = new OpenAgentEngineProvider("engine", settings, new StubRouteTable());
-        using var request = new HttpRequestMessage(HttpMethod.Post, "http://engine/chat");
-        if (supplied != null) request.Headers.Add("X-OpenAgent-Llm-Profile-Id", supplied);
-        await provider.ConfigureRequestAsync(request,
-            new AgentForwardingTarget("http://engine", request.RequestUri!), CancellationToken.None);
-        Assert.Equal(expected, request.Headers.GetValues("X-OpenAgent-Llm-Profile-Id").Single());
-        var stream = await provider.ResolveForwardingAsync("sse", "tenant", "conversation", CancellationToken.None);
-        Assert.EndsWith("/chat/stream", stream!.RequestUri.AbsolutePath);
+            ["BaseUrl"] = "http://engine/",
+            ["ServiceHeaders:X-Api-Key"] = "service-key"
+        });
+
+        AgentProviderCatalog catalog = await provider.GetAgentsAsync(
+            new AgentProviderRequestContext(
+                new AgentUserContext { UserId = "user-1", TenantId = "tenant-1", IsAuthenticated = true },
+                "Bearer user-token"),
+            CancellationToken.None);
+
+        Assert.Equal("http://engine/v1/models", handler.RequestUri);
+        Assert.Equal("Bearer user-token", handler.Authorization);
+        Assert.Equal("service-key", handler.ServiceKey);
+        Assert.Equal(["finance", "hr"], catalog.Agents.Select(agent => agent.AgentId));
+        Assert.Equal("Invoices and refunds", catalog.Agents[0].Description);
+        Assert.Equal("Finance", catalog.Agents[0].Name);
+        Assert.Equal("hr", catalog.Agents[1].Name);
+        Assert.Equal(string.Empty, catalog.Agents[1].Description);
     }
 
     [Fact]
-    public async Task Provider_UsesRouteTableContextAndConfiguredProtocolPaths()
+    public async Task GetAgentsAsync_NonSuccess_MarksProviderUnavailable()
     {
-        var handler = new RecordingHandler();
-        var routeTable = new StubRouteTable();
-        IConfiguration settings = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["AgentListPath"] = "/custom/agents",
-                ["ChatPath"] = "/custom/chat",
-                ["ServiceHeaders:Authorization"] = "Basic service-token",
-                ["ServiceHeaders:X-Tenant-Id"] = "configured-tenant",
-                ["ServiceHeaders:X-User-Id"] = "configured-user"
-            })
-            .Build();
-        using var provider = new OpenAgentEngineProvider(
-            "self-engine",
-            settings,
-            routeTable,
-            handler);
+        using var provider = Create(new RecordingHandler { Status = HttpStatusCode.BadGateway },
+            new Dictionary<string, string?> { ["BaseUrl"] = "http://engine" });
 
-        var requestContext = new AgentProviderRequestContext(
-            new AgentUserContext
-            {
-                UserId = "user-1",
-                TenantId = "tenant-1",
-                IsAuthenticated = true
-            },
-            "Basic forwarded-token",
-            "openai-gpt4o");
         AgentProviderCatalog catalog = await provider.GetAgentsAsync(
-            requestContext,
-            CancellationToken.None);
-        IReadOnlyList<AgentSummary> agents = catalog.Agents;
-        IntentRecognitionResult? response = await provider.RecognizeIntentAsync(
-            requestContext,
-            "intent-router",
-            agents,
-            "select an agent",
-            CancellationToken.None);
-        IntentRecognitionResult? secondResponse = await provider.RecognizeIntentAsync(
-            requestContext,
-            "intent-router",
-            agents,
-            "select another agent",
-            CancellationToken.None);
-        AgentProviderConversationStatus conversation = await provider.ResolveConversationAsync(
-            requestContext,
-            "conversation-1",
-            CancellationToken.None);
-        AgentForwardingTarget? target = await provider.ResolveForwardingAsync(
-            "stream",
-            "tenant-1",
-            "conversation-1",
+            new AgentProviderRequestContext(new AgentUserContext { UserId = "u", TenantId = "t" }),
             CancellationToken.None);
 
-        Assert.Equal("finance", Assert.Single(agents).AgentId);
-        Assert.Equal("finance", response?.AgentId);
-        Assert.Equal("finance", secondResponse?.AgentId);
-        Assert.Equal(0.95, response?.Confidence);
-        Assert.Equal(
-            [
-                "http://engine/custom/agents",
-                "http://engine/custom/chat/intent",
-                "http://engine/custom/chat/intent",
-                "http://engine/api/v1/agent/provider/conversations/conversation-1"
-            ],
-            handler.RequestUris);
-        Assert.Equal(
-            ["Basic forwarded-token", "Basic forwarded-token", "Basic forwarded-token", "Basic forwarded-token"],
-            handler.Authorizations);
-        Assert.All(handler.IdentityHeaders, present => Assert.True(present));
-        Assert.Equal(AgentProviderConversationStatus.Found, conversation);
-        Assert.Equal("tenant-1", routeTable.TenantId);
-        Assert.Equal("conversation-1", routeTable.ConversationId);
-        Assert.Equal("http://engine", target?.DestinationPrefix);
-        Assert.Equal("http://engine/custom/chat/stream", target?.RequestUri.ToString());
-        Assert.All(handler.ChatBodies, body => AssertIntentExecution(body));
+        Assert.False(catalog.IsAvailable);
     }
+
+    [Theory]
+    [InlineData(ChatProtocol.ChatCompletions, "/v1/chat/completions")]
+    [InlineData(ChatProtocol.Responses, "/v1/responses")]
+    [InlineData(ChatProtocol.Messages, "/v1/messages")]
+    public async Task ResolveForwardingAsync_UsesTheStandardPathOfTheProtocol(ChatProtocol protocol, string path)
+    {
+        using var provider = Create(new RecordingHandler(),
+            new Dictionary<string, string?> { ["BaseUrl"] = "http://engine" });
+
+        AgentForwardingTarget? target = await provider.ResolveForwardingAsync(
+            protocol, "tenant-1", "session-1", CancellationToken.None);
+
+        Assert.Equal("http://engine" + path, target?.RequestUri.ToString());
+        Assert.Equal("http://engine", target?.DestinationPrefix);
+    }
+
+    [Fact]
+    public async Task ConfiguredProtocols_LimitWhatTheProviderServes()
+    {
+        using var provider = Create(new RecordingHandler(), new Dictionary<string, string?>
+        {
+            ["BaseUrl"] = "http://engine",
+            ["Protocols:0"] = "Messages"
+        });
+
+        Assert.True(provider.Supports(ChatProtocol.Messages));
+        Assert.False(provider.Supports(ChatProtocol.Responses));
+        Assert.Null(await provider.ResolveForwardingAsync(
+            ChatProtocol.Responses, "tenant-1", null, CancellationToken.None));
+    }
+
+    [Fact]
+    public void NoConfiguredProtocols_MeansAllThree()
+    {
+        using var provider = Create(new RecordingHandler(), new Dictionary<string, string?>());
+
+        Assert.All(Enum.GetValues<ChatProtocol>(), protocol => Assert.True(provider.Supports(protocol)));
+    }
+
+    [Fact]
+    public void UnknownProtocolName_IsRejected()
+    {
+        Assert.Throws<InvalidOperationException>(() => Create(new RecordingHandler(),
+            new Dictionary<string, string?> { ["Protocols:0"] = "Grpc" }));
+    }
+
+    [Fact]
+    public async Task WithoutBaseUrl_UsesRouteTableWithTenantAndSession()
+    {
+        var routeTable = new StubRouteTable();
+        using var provider = new OpenAgentEngineProvider("engine",
+            new ConfigurationBuilder().Build(), routeTable, new RecordingHandler());
+
+        await provider.ResolveForwardingAsync(ChatProtocol.Responses, "tenant-1", "session-1", CancellationToken.None);
+
+        Assert.Equal("tenant-1", routeTable.TenantId);
+        Assert.Equal("session-1", routeTable.SessionId);
+    }
+
+    private static OpenAgentEngineProvider Create(HttpMessageHandler handler, Dictionary<string, string?> settings) =>
+        new("engine", new ConfigurationBuilder().AddInMemoryCollection(settings).Build(), new StubRouteTable(), handler);
 
     private sealed class RecordingHandler : HttpMessageHandler
     {
-        public List<string> RequestUris { get; } = [];
-        public List<string?> Authorizations { get; } = [];
-        public List<bool> IdentityHeaders { get; } = [];
-        public List<string> ChatBodies { get; } = [];
+        public HttpStatusCode Status { get; init; } = HttpStatusCode.OK;
+        public string? RequestUri { get; private set; }
+        public string? Authorization { get; private set; }
+        public string? ServiceKey { get; private set; }
 
-        protected override async Task<HttpResponseMessage> SendAsync(
-            HttpRequestMessage request,
-            CancellationToken cancellationToken)
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            RequestUris.Add(request.RequestUri?.ToString() ?? string.Empty);
-            Authorizations.Add(request.Headers.TryGetValues(
-                "Authorization",
-                out IEnumerable<string>? authorizations)
-                ? authorizations.SingleOrDefault()
-                : null);
-            IdentityHeaders.Add(
-                request.Headers.Contains("X-User-Id")
-                || request.Headers.Contains("X-Tenant-Id")
-                || request.Headers.Contains("X-OpenAgent-User-Id")
-                || request.Headers.Contains("X-OpenAgent-Tenant-Id"));
-            if (request.Method == HttpMethod.Get
-                && request.RequestUri?.AbsolutePath == "/custom/agents")
+            RequestUri = request.RequestUri?.ToString();
+            Authorization = request.Headers.TryGetValues("Authorization", out var values) ? values.Single() : null;
+            ServiceKey = request.Headers.TryGetValues("X-Api-Key", out var keys) ? keys.Single() : null;
+            return Task.FromResult(new HttpResponseMessage(Status)
             {
-                return new HttpResponseMessage(HttpStatusCode.OK)
+                Content = JsonContent.Create(new
                 {
-                    Content = JsonContent.Create(new[]
+                    @object = "list",
+                    data = new object[]
                     {
-                        new AgentSummary { AgentId = "finance", TenantId = "tenant-1", Status = 2 }
-                    })
-                };
-            }
-
-            if (request.Method == HttpMethod.Get)
-            {
-                return new HttpResponseMessage(HttpStatusCode.NoContent);
-            }
-
-            string chatBody = request.Content == null
-                ? string.Empty
-                : await request.Content.ReadAsStringAsync(cancellationToken);
-            ChatBodies.Add(chatBody);
-            return new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = JsonContent.Create(new ChatResponse
-                {
-                    Message = "```json\n{\"agentId\":\"finance\",\"confidence\":0.95}\n```"
+                        new { id = "finance", @object = "model", display_name = "Finance", description = "Invoices and refunds" },
+                        new { id = "hr", @object = "model" }
+                    }
                 })
-            };
+            });
         }
-    }
-
-    private static void AssertIntentExecution(string body)
-    {
-        using JsonDocument document = JsonDocument.Parse(body);
-        JsonElement context = document.RootElement.GetProperty("context");
-        Assert.Equal("intent-router", context.GetProperty("agentId").GetString());
-        Assert.Equal("openai-gpt4o", context.GetProperty("llmProfileId").GetString());
     }
 
     private sealed class StubRouteTable : IRouteTable
     {
         public string? TenantId { get; private set; }
-        public string? ConversationId { get; private set; }
+        public string? SessionId { get; private set; }
 
         public string? GetTargetEndpoint(string intent) => "http://engine";
 
-        public string? GetTargetEndpoint(
-            string intent,
-            string? tenantId,
-            string? conversationId)
+        public string? GetTargetEndpoint(string intent, string? tenantId, string? conversationId)
         {
             TenantId = tenantId;
-            ConversationId = conversationId;
+            SessionId = conversationId;
             return "http://engine";
         }
     }

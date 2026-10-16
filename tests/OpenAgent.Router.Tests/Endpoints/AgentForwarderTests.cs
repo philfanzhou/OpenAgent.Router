@@ -31,7 +31,6 @@ public class AgentForwarderTests
         {
             RequestServices = services
         };
-        context.Features.Set(new AgentRoutingFeature("conversation-1", provider.Id));
         using var forwarder = new AgentForwarder(
             null!,
             NullLogger<AgentForwarder>.Instance,
@@ -41,13 +40,15 @@ public class AgentForwarderTests
         await forwarder.ForwardAsync(
             context,
             provider,
-            "stream",
+            ChatProtocol.ChatCompletions,
+            true,
+            "session-1",
             CancellationToken.None);
 
         Assert.Equal(StatusCodes.Status503ServiceUnavailable, context.Response.StatusCode);
-        Assert.Equal("stream", provider.Action);
+        Assert.Equal(ChatProtocol.ChatCompletions, provider.Protocol);
         Assert.Equal("user-tenant", provider.TenantId);
-        Assert.Equal("conversation-1", provider.ConversationId);
+        Assert.Equal("session-1", provider.SessionId);
     }
 
     [Fact]
@@ -61,7 +62,7 @@ public class AgentForwarderTests
         {
             Target = new AgentForwardingTarget(
                 "http://localhost:5208",
-                new Uri("http://localhost:5208/api/v1/agent/chat/stream"))
+                new Uri("http://localhost:5208/v1/chat/completions"))
         };
         using ServiceProvider services = new ServiceCollection()
             .AddLogging()
@@ -77,7 +78,6 @@ public class AgentForwarderTests
             RequestServices = services
         };
         context.RequestAborted = aborted.Token;
-        context.Features.Set(new AgentRoutingFeature("conversation-1", provider.Id));
         var healthTracker = new RecordingEndpointHealthTracker();
         using var forwarder = new AgentForwarder(
             new FixedResultForwarder(ForwarderError.ResponseBodyCanceled),
@@ -88,7 +88,9 @@ public class AgentForwarderTests
         await forwarder.ForwardAsync(
             context,
             provider,
-            "stream",
+            ChatProtocol.ChatCompletions,
+            true,
+            "session-1",
             CancellationToken.None);
 
         Assert.Empty(healthTracker.Failures);
@@ -108,10 +110,10 @@ public class AgentForwarderTests
     private sealed class RecordingProvider : IAgentProvider
     {
         public string Id => "partner";
-        public bool SupportsRouterConversationIds => true;
-        public string? Action { get; private set; }
+        public bool Supports(ChatProtocol protocol) => true;
+        public ChatProtocol? Protocol { get; private set; }
         public string? TenantId { get; private set; }
-        public string? ConversationId { get; private set; }
+        public string? SessionId { get; private set; }
         public AgentForwardingTarget? Target { get; set; }
 
         public Task<AgentProviderCatalog> GetAgentsAsync(
@@ -119,29 +121,15 @@ public class AgentForwarderTests
             CancellationToken cancellationToken) =>
             Task.FromResult(new AgentProviderCatalog([]));
 
-        public Task<AgentProviderConversationStatus> ResolveConversationAsync(
-            AgentProviderRequestContext requestContext,
-            string conversationId,
-            CancellationToken cancellationToken) =>
-            Task.FromResult(AgentProviderConversationStatus.NotFound);
-
-        public Task<IntentRecognitionResult?> RecognizeIntentAsync(
-            AgentProviderRequestContext requestContext,
-            string intentAgentId,
-            IReadOnlyList<AgentSummary> agents,
-            string message,
-            CancellationToken cancellationToken) =>
-            Task.FromResult<IntentRecognitionResult?>(null);
-
         public Task<AgentForwardingTarget?> ResolveForwardingAsync(
-            string? action,
+            ChatProtocol protocol,
             string? tenantId,
-            string? conversationId,
+            string? sessionId,
             CancellationToken cancellationToken)
         {
-            Action = action;
+            Protocol = protocol;
             TenantId = tenantId;
-            ConversationId = conversationId;
+            SessionId = sessionId;
             return Task.FromResult(Target);
         }
 
