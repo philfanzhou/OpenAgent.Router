@@ -127,15 +127,14 @@ public sealed class TestEngineHost(string responseName) : IAsyncDisposable
                 new { agentId = "private", name = "Private", description = "Other tenant", tenantId = "tenant-2", status = 2 }
             });
         });
-        application.MapPost("/v1/chat/completions", async context =>
+        application.MapPost("/v1/decisions", async context =>
         {
             Interlocked.Increment(ref _decisionCount);
             using var reader = new StreamReader(context.Request.Body);
             LastDecisionBody = await reader.ReadToEndAsync(context.RequestAborted);
             await context.Response.WriteAsJsonAsync(new
             {
-                choices = new[] { new { finish_reason = "stop",
-                    message = new { content = "{\"agentId\":\"finance\",\"confidence\":0.95}" } } }
+                answers = new { agent = new { type = "choice", choice = "finance", confidence = 0.95 } }
             });
         });
         application.MapPost("/api/v1/agent/chat", async context =>

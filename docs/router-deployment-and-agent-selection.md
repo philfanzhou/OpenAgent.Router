@@ -177,7 +177,7 @@ Router 必须验证结果可解析、Agent ID 属于本次候选、置信度是�
 - 存活探针表示进程可响应；就绪探针反映 Redis 和实际 Provider 是否能支持目标路由能力。模型故障但存在有效回退时标记降级，不能因为决策模型故障阻断仍可服务的已有会话；探针不通过付费模型推理探测健康。
 - 新增镜像构建与发布流程，使用可追溯版本标签；Compose 仅为部署样例，具体生产镜像仓库和发布平台另定。
 
-新增 `RouterSettings:DecisionModel` 表达 Endpoint、ModelId、密钥来源和输入输出限制；`IntentRecognition` 表达启用开关、阈值、目录/决策超时和回退 Agent。旧 `ProviderId/AgentId` 不再参与选择，具体配置以部署文档为准。
+新增 `RouterSettings:DecisionModel` 表达 Endpoint、密钥来源和输入输出限制；`IntentRecognition` 表达启用开关、阈值、目录/决策超时和回退 Agent。旧 `ProviderId/AgentId` 不再参与选择，具体配置以部署文档为准。
 
 生产不允许悄悄退回进程内会话存储。Redis 服务发现故障时，静态路由仍可帮助找到实例，但不能替代会话绑定持久化或授权所需状态。
 

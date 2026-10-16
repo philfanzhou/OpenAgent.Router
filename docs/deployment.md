@@ -29,15 +29,15 @@ Router 不承诺跨故障的业务执行恰好一次。请求已发送或流已�
 
 ## 模型与候选
 
-`RouterSettings:DecisionModel:Endpoint` 是完整 Chat Completions URL，例如 `https://model-gateway.example.com/v1/chat/completions`；不自动拼接路径。连接必须支持 `messages`、`response_format: {"type":"json_object"}` 和 `max_completion_tokens`。协议依据 [Chat Completions 官方文档](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)。
+`RouterSettings:DecisionModel:Endpoint` 是 jev 决策服务的完整 URL，例如 `http://192.168.20.31:7860/v1/decisions`；不自动拼接路径。Router 发送一个 `choice` 问题：`state` 为用户消息，`criteria` 的键为候选 Agent ID、值为其描述（无描述则用名称）。
 
-模型只接收 `message` 和过滤后的候选 ID、名称、描述。使用 Router 专用凭据与 `ModelId`，不传用户的认证令牌或执行模型 `llmProfileId`。模型需返回：
+模型只接收 `message` 和过滤后的候选 ID、名称、描述。使用 Router 专用凭据，不传用户的认证令牌或执行模型 `llmProfileId`。模型需在 `answers.agent` 返回：
 
 ```json
-{"agentId":"finance","confidence":0.95}
+{"type":"choice","choice":"finance","confidence":0.95}
 ```
 
-Router 校验候选成员、完整 JSON、有限置信度及阈值，且只接受正常完成的响应。模型网络错误、超时、限流、非法结果或输入超过配置上限时，走配置的默认 Agent；默认 Agent 必须仍在当前授权可用目录内，否则返回 503。取消请求不触发回退。
+Router 校验候选成员、完整 JSON、有限置信度及阈值。模型网络错误、超时、限流、非法结果或输入超过配置上限时，走配置的默认 Agent；默认 Agent 必须仍在当前授权可用目录内，否则返回 503。取消请求不触发回退。
 
 OpenAgentEngine 目录仅接受当前租户的 `Published` Agent（共享枚举值 2）。ACL 进一步限制用户访问，Redis 查询失败或 ACL 数据损坏返回 503；不长期缓存 ACL，因此撤销权限在下一次请求生效。未设置 ACL 的已发布 Agent 视为租户内公开。
 
@@ -47,20 +47,18 @@ OpenAgentEngine 目录仅接受当前租户的 `Published` Agent（共享枚举�
 
 ## 配置
 
-配置支持 ASP.NET Core 环境变量形式，例如 `RouterSettings__DecisionModel__ModelId`。启用模型选择时，缺失 Endpoint / ModelId 会使启动校验失败；可在开发或显式路由部署中设置 `RouterSettings__IntentRecognition__Enabled=false`，未显式指定 Agent 时只使用合法默认 Agent。
+配置支持 ASP.NET Core 环境变量形式，例如 `RouterSettings__DecisionModel__Endpoint`。启用模型选择时，缺失 Endpoint 会使启动校验失败；可在开发或显式路由部署中设置 `RouterSettings__IntentRecognition__Enabled=false`，未显式指定 Agent 时只使用合法默认 Agent。
 
 | 配置 | 默认值 | 作用 |
 | --- | --- | --- |
 | `ConnectionStrings:Redis` | 无 | 非 Development 环境必填；开发环境可使用进程内存储 |
 | `RouterSettings:DecisionModel:Endpoint` | 空 | 完整模型请求 URL |
-| `RouterSettings:DecisionModel:ModelId` | 空 | 专用决策模型名，按模型服务实际配置填写 |
 | `RouterSettings:DecisionModel:ApiKey` | 空 | 专用密钥；本地无鉴权网关可留空 |
 | `RouterSettings:DecisionModel:ApiKeyFile` | 空 | 可选 Secret 文件；设置后优先从文件读取 |
 | `RouterSettings:DecisionModel:MaxPromptCharacters` | 16000 | 自动选择的 prompt 上限 |
 | `RouterSettings:DecisionModel:MaxCandidates` | 100 | 候选总数上限，不静默截断 |
 | `RouterSettings:DecisionModel:MaxDescriptionCharacters` | 2000 | 单条候选描述上限；名称上限 256 字符 |
 | `RouterSettings:DecisionModel:MaxResponseBytes` | 16384 | 模型响应体上限 |
-| `RouterSettings:DecisionModel:MaxOutputTokens` | 256 | 模型输出 token 上限 |
 | `RouterSettings:IntentRecognition:TimeoutMs` | 5000 | 模型请求预算 |
 | `RouterSettings:IntentRecognition:CatalogTimeoutMs` | 3000 | 目录与 ACL 查询预算 |
 | `RouterSettings:IntentRecognition:MinimumConfidence` | 0.5 | 接受模型结果的阈值，不代表校准后的正确率 |
@@ -70,7 +68,7 @@ OpenAgentEngine 目录仅接受当前租户的 `Published` Agent（共享枚举�
 
 原 `IntentRecognition:ProviderId/AgentId` 不再用于选择链路；不需要配置 `intent-router`。客户端 `llmProfileId` 原样保留给任务执行，不决定 Router 使用哪个模型。
 
-当前 Engine 的任务执行仍要求 LLM profile。可在对应 Provider 的 Settings 设置 `DefaultLlmProfileId`（Compose 中为 `ENGINE_LLM_PROFILE_ID`），Router 会通过 `X-OpenAgent-Llm-Profile-Id` 提供默认执行模型；客户端显式传入的执行 profile 优先。没有配置默认值时，客户端仍需携带执行 profile。上面的仅 `message` 示例以已配置服务端默认值为前提；此配置与 Router 的 `DecisionModel:ModelId` 相互独立。Engine 还需接受透传的用户令牌并采用一致的租户解析。
+当前 Engine 的任务执行仍要求 LLM profile。可在对应 Provider 的 Settings 设置 `DefaultLlmProfileId`（Compose 中为 `ENGINE_LLM_PROFILE_ID`），Router 会通过 `X-OpenAgent-Llm-Profile-Id` 提供默认执行模型；客户端显式传入的执行 profile 优先。没有配置默认值时，客户端仍需携带执行 profile。上面的仅 `message` 示例以已配置服务端默认值为前提；此配置与 Router 的决策模型相互独立。Engine 还需接受透传的用户令牌并采用一致的租户解析。
 
 绑定通过 Redis `SET NX` 原子创建，包含版本、用户、Provider、Agent 和到期时间，转发失败也不换绑。过期会话返回 404。会话删除先保存墓碑，再转发 DELETE；即使下游删除失败，该 ID 也不能再次进入 chat 创建对话。清理下游残留数据由运维处理。旧版本仅包含 Provider、没有用户与 Agent 的绑定会被拒绝，升级后客户端应创建新会话。
 
@@ -78,7 +76,7 @@ OpenAgentEngine 目录仅接受当前租户的 `Published` Agent（共享枚举�
 
 ## 使用 Docker Compose
 
-1. 复制 `deploy/.env.example` 到 `deploy/.env`，填写身份服务 Authority、Audience、ClientId，Engine 的容器可达地址、默认执行 profile，以及专用决策模型 Endpoint / ModelId。
+1. 复制 `deploy/.env.example` 到 `deploy/.env`，填写身份服务 Authority、Audience、ClientId，Engine 的容器可达地址、默认执行 profile，以及专用决策模型 Endpoint。
 2. 将专用模型密钥写入仓库之外的文件，设置 `DECISION_MODEL_API_KEY_FILE` 指向该文件；文件必须允许容器的非 root 用户读取。无鉴权网关可使用空文件。
 3. 从仓库根目录执行：
 

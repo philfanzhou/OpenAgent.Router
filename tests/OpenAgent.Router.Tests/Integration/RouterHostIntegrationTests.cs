@@ -14,8 +14,7 @@ public sealed class RouterHostIntegrationTests : IClassFixture<RouterHostFixture
     private Dictionary<string, string?> ModelSettings() => new()
     {
         ["RouterSettings:IntentRecognition:Enabled"] = "true",
-        ["RouterSettings:DecisionModel:Endpoint"] = $"{_fixture.PrimaryEngine.Endpoint}/v1/chat/completions",
-        ["RouterSettings:DecisionModel:ModelId"] = "dedicated-routing-model"
+        ["RouterSettings:DecisionModel:Endpoint"] = $"{_fixture.PrimaryEngine.Endpoint}/v1/decisions"
     };
 
     [Theory]
@@ -171,7 +170,7 @@ public sealed class RouterHostIntegrationTests : IClassFixture<RouterHostFixture
     public async Task ModelUnavailable_UsesAuthorizedFallback()
     {
         var settings = ModelSettings();
-        settings["RouterSettings:DecisionModel:Endpoint"] = "http://127.0.0.1:1/v1/chat/completions";
+        settings["RouterSettings:DecisionModel:Endpoint"] = "http://127.0.0.1:1/v1/decisions";
         using var factory = _fixture.CreateFactory(settings: settings);
         using var client = factory.CreateClient();
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/agent/chat")
