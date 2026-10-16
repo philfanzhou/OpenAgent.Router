@@ -14,3 +14,9 @@ dotnet test OpenAgent.Router.sln
 ```
 
 Docker 部署样例位于 `deploy/compose.yaml`，依赖独立运行的 Engine、模型网关及身份服务。使用前按部署文档配置地址和凭据。
+
+## 本地联调
+
+1. 启动 mock 下游：`dotnet run tools/mock-business-api.cs`（`http://localhost:5290`）。
+2. 启动 Router：`dotnet run --project src/OpenAgent.Router --launch-profile mock-business`（`http://localhost:5001`，Development，Basic 账号 `admin/admin`，决策模型指向 `RouterSettings__DecisionModel__Endpoint`）。
+3. Postman 导入 `tools/postman/OpenAgent.Router.postman_collection.json`，按文件夹顺序运行；命令行：`npx newman run tools/postman/OpenAgent.Router.postman_collection.json`。

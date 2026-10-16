@@ -38,9 +38,9 @@
       "applicationUrl": "http://localhost:5001",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
-        "RouterSettings__AgentProviders__Providers__1__Id": "business-mock",
-        "RouterSettings__AgentProviders__Providers__1__Type": "OpenAgentEngine",
-        "RouterSettings__AgentProviders__Providers__1__Settings__BaseUrl": "http://localhost:5290"
+        "RouterSettings__AgentProviders__Providers__0__Settings__BaseUrl": "http://localhost:5290",
+        "RouterSettings__DecisionModel__Endpoint": "http://192.168.2.159:7860/v1/decide",
+        "RouterSettings__IntentRecognition__FallbackAgentId": "general"
       }
     }
   }

@@ -1,0 +1,1450 @@
+{
+  "info": {
+    "name": "OpenAgent Router",
+    "description": "标准 OpenAI / Anthropic 接口网关的联调用例。先启动 mock 下游和 Router，再按文件夹顺序运行（后面的用例依赖前面保存的会话变量）。默认账号 admin/admin（Basic）。",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "basic",
+    "basic": [
+      {
+        "key": "username",
+        "value": "{{user}}",
+        "type": "string"
+      },
+      {
+        "key": "password",
+        "value": "{{password}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5001"
+    },
+    {
+      "key": "user",
+      "value": "admin"
+    },
+    {
+      "key": "password",
+      "value": "admin"
+    }
+  ],
+  "item": [
+    {
+      "name": "00 健康与目录",
+      "description": "",
+      "item": [
+        {
+          "name": "健康检查",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Healthy\", () => { pm.response.to.have.status(200); pm.expect(pm.response.text()).to.eql(\"Healthy\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "GET /v1/models",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"auto first, then every downstream agent with description\", () => {",
+                  "  const b = pm.response.json();",
+                  "  pm.expect(b.object).to.eql(\"list\");",
+                  "  pm.expect(b.data.map(m => m.id)).to.eql([\"auto\", \"finance\", \"general\", \"hr\"]);",
+                  "  b.data.forEach(m => pm.expect(m.description).to.be.a(\"string\").and.not.empty);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/models",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "models"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "01 指定 Agent（不调用决策模型）",
+      "description": "",
+      "item": [
+        {
+          "name": "model=general",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const h = n => pm.response.headers.get(n);",
+                  "",
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"selected agent is general\", () => pm.expect(h(\"X-OpenAgent-Selected-Agent-Id\")).to.eql(\"general\"));",
+                  "pm.test(\"X-Session-Id is a UUID\", () => pm.expect(h(\"X-Session-Id\")).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/));",
+                  "pm.test(\"X-Chat-Id starts with chatcmpl-\", () => pm.expect(h(\"X-Chat-Id\")).to.match(/^chatcmpl-/));",
+                  "pm.test(\"downstream received model=general and the same session id\", () => {",
+                  "  const echo = pm.response.json().message;",
+                  "  pm.expect(echo).to.include('\\\"model\\\":\\\"general\\\"');",
+                  "  pm.expect(echo).to.include(h(\"X-Session-Id\"));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/chat/completions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"general\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"今天天气怎么样\"\n    }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "model=hr",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const h = n => pm.response.headers.get(n);",
+                  "",
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"selected agent is hr\", () => pm.expect(h(\"X-OpenAgent-Selected-Agent-Id\")).to.eql(\"hr\"));",
+                  "pm.test(\"X-Session-Id is a UUID\", () => pm.expect(h(\"X-Session-Id\")).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/));",
+                  "pm.test(\"X-Chat-Id starts with chatcmpl-\", () => pm.expect(h(\"X-Chat-Id\")).to.match(/^chatcmpl-/));",
+                  "pm.test(\"downstream received model=hr and the same session id\", () => {",
+                  "  const echo = pm.response.json().message;",
+                  "  pm.expect(echo).to.include('\\\"model\\\":\\\"hr\\\"');",
+                  "  pm.expect(echo).to.include(h(\"X-Session-Id\"));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/chat/completions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"hr\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"随便问点什么\"\n    }\n  ]\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 model=auto 由决策模型选择",
+      "description": "",
+      "item": [
+        {
+          "name": "退款 → finance（保存会话 sessionFinance）",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const h = n => pm.response.headers.get(n);",
+                  "",
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"selected agent is finance\", () => pm.expect(h(\"X-OpenAgent-Selected-Agent-Id\")).to.eql(\"finance\"));",
+                  "pm.test(\"X-Session-Id is a UUID\", () => pm.expect(h(\"X-Session-Id\")).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/));",
+                  "pm.test(\"X-Chat-Id starts with chatcmpl-\", () => pm.expect(h(\"X-Chat-Id\")).to.match(/^chatcmpl-/));",
+                  "pm.test(\"downstream received model=finance and the same session id\", () => {",
+                  "  const echo = pm.response.json().message;",
+                  "  pm.expect(echo).to.include('\\\"model\\\":\\\"finance\\\"');",
+                  "  pm.expect(echo).to.include(h(\"X-Session-Id\"));",
+                  "});",
+                  "pm.collectionVariables.set(\"sessionFinance\", h(\"X-Session-Id\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/chat/completions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"auto\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"帮我分析这份订单的退款原因\"\n    }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "请假 → hr",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const h = n => pm.response.headers.get(n);",
+                  "",
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"selected agent is hr\", () => pm.expect(h(\"X-OpenAgent-Selected-Agent-Id\")).to.eql(\"hr\"));",
+                  "pm.test(\"X-Session-Id is a UUID\", () => pm.expect(h(\"X-Session-Id\")).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/));",
+                  "pm.test(\"X-Chat-Id starts with chatcmpl-\", () => pm.expect(h(\"X-Chat-Id\")).to.match(/^chatcmpl-/));",
+                  "pm.test(\"downstream received model=hr and the same session id\", () => {",
+                  "  const echo = pm.response.json().message;",
+                  "  pm.expect(echo).to.include('\\\"model\\\":\\\"hr\\\"');",
+                  "  pm.expect(echo).to.include(h(\"X-Session-Id\"));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/chat/completions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"auto\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"我想请三天年假，怎么申请\"\n    }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "翻译 → general",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const h = n => pm.response.headers.get(n);",
+                  "",
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"selected agent is general\", () => pm.expect(h(\"X-OpenAgent-Selected-Agent-Id\")).to.eql(\"general\"));",
+                  "pm.test(\"X-Session-Id is a UUID\", () => pm.expect(h(\"X-Session-Id\")).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/));",
+                  "pm.test(\"X-Chat-Id starts with chatcmpl-\", () => pm.expect(h(\"X-Chat-Id\")).to.match(/^chatcmpl-/));",
+                  "pm.test(\"downstream received model=general and the same session id\", () => {",
+                  "  const echo = pm.response.json().message;",
+                  "  pm.expect(echo).to.include('\\\"model\\\":\\\"general\\\"');",
+                  "  pm.expect(echo).to.include(h(\"X-Session-Id\"));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/chat/completions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"auto\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"帮我把这段话翻译成英文：今天天气很好\"\n    }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "英文请求 → finance",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const h = n => pm.response.headers.get(n);",
+                  "",
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"selected agent is finance\", () => pm.expect(h(\"X-OpenAgent-Selected-Agent-Id\")).to.eql(\"finance\"));",
+                  "pm.test(\"X-Session-Id is a UUID\", () => pm.expect(h(\"X-Session-Id\")).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/));",
+                  "pm.test(\"X-Chat-Id starts with chatcmpl-\", () => pm.expect(h(\"X-Chat-Id\")).to.match(/^chatcmpl-/));",
+                  "pm.test(\"downstream received model=finance and the same session id\", () => {",
+                  "  const echo = pm.response.json().message;",
+                  "  pm.expect(echo).to.include('\\\"model\\\":\\\"finance\\\"');",
+                  "  pm.expect(echo).to.include(h(\"X-Session-Id\"));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/chat/completions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"auto\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"How do I submit an expense report for my business trip?\"\n    }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "省略 model 等同 auto",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const h = n => pm.response.headers.get(n);",
+                  "",
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"selected agent is finance\", () => pm.expect(h(\"X-OpenAgent-Selected-Agent-Id\")).to.eql(\"finance\"));",
+                  "pm.test(\"X-Session-Id is a UUID\", () => pm.expect(h(\"X-Session-Id\")).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/));",
+                  "pm.test(\"X-Chat-Id starts with chatcmpl-\", () => pm.expect(h(\"X-Chat-Id\")).to.match(/^chatcmpl-/));",
+                  "pm.test(\"downstream received model=finance and the same session id\", () => {",
+                  "  const echo = pm.response.json().message;",
+                  "  pm.expect(echo).to.include('\\\"model\\\":\\\"finance\\\"');",
+                  "  pm.expect(echo).to.include(h(\"X-Session-Id\"));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/chat/completions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"帮我汇总上季度的费用支出明细\"\n    }\n  ]\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 会话续接",
+      "description": "",
+      "item": [
+        {
+          "name": "用 X-Session-Id 续接（话题已变，Agent 不变）",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const h = n => pm.response.headers.get(n);",
+                  "",
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"same session, still finance\", () => {",
+                  "  pm.expect(h(\"X-Session-Id\")).to.eql(pm.collectionVariables.get(\"sessionFinance\"));",
+                  "  pm.expect(h(\"X-OpenAgent-Selected-Agent-Id\")).to.eql(\"finance\");",
+                  "});",
+                  "pm.test(\"new chat id each turn\", () => pm.expect(h(\"X-Chat-Id\")).to.match(/^chatcmpl-/));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Session-Id",
+                "value": "{{sessionFinance}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/chat/completions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"auto\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"写一首关于秋天的短诗\"\n    }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "指纹续接 ①首轮",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const h = n => pm.response.headers.get(n);",
+                  "",
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"selected agent is finance\", () => pm.expect(h(\"X-OpenAgent-Selected-Agent-Id\")).to.eql(\"finance\"));",
+                  "pm.test(\"X-Session-Id is a UUID\", () => pm.expect(h(\"X-Session-Id\")).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/));",
+                  "pm.test(\"X-Chat-Id starts with chatcmpl-\", () => pm.expect(h(\"X-Chat-Id\")).to.match(/^chatcmpl-/));",
+                  "pm.test(\"downstream received model=finance and the same session id\", () => {",
+                  "  const echo = pm.response.json().message;",
+                  "  pm.expect(echo).to.include('\\\"model\\\":\\\"finance\\\"');",
+                  "  pm.expect(echo).to.include(h(\"X-Session-Id\"));",
+                  "});",
+                  "pm.collectionVariables.set(\"sessionFp\", h(\"X-Session-Id\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/chat/completions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"auto\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"我的差旅报销单什么时候能批下来\"\n    }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "指纹续接 ②带 assistant 历史、不带任何会话头",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const h = n => pm.response.headers.get(n);",
+                  "",
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"found the same session by first-message fingerprint\", () => {",
+                  "  pm.expect(h(\"X-Session-Id\")).to.eql(pm.collectionVariables.get(\"sessionFp\"));",
+                  "  pm.expect(h(\"X-OpenAgent-Selected-Agent-Id\")).to.eql(\"finance\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/chat/completions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"auto\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"我的差旅报销单什么时候能批下来\"\n    },\n    {\n      \"role\": \"assistant\",\n      \"content\": \"一般 3 个工作日内。\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"那发票需要原件吗？\"\n    }\n  ]\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 OpenAI Responses 协议",
+      "description": "",
+      "item": [
+        {
+          "name": "①首轮 auto（保存 respId）",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const h = n => pm.response.headers.get(n);",
+                  "",
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"selected agent is finance\", () => pm.expect(h(\"X-OpenAgent-Selected-Agent-Id\")).to.eql(\"finance\"));",
+                  "pm.test(\"X-Session-Id is a UUID\", () => pm.expect(h(\"X-Session-Id\")).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/));",
+                  "pm.test(\"X-Chat-Id starts with resp_\", () => pm.expect(h(\"X-Chat-Id\")).to.match(/^resp_/));",
+                  "pm.test(\"downstream received model=finance and the same session id\", () => {",
+                  "  const echo = pm.response.json().message;",
+                  "  pm.expect(echo).to.include('\\\"model\\\":\\\"finance\\\"');",
+                  "  pm.expect(echo).to.include(h(\"X-Session-Id\"));",
+                  "});",
+                  "pm.collectionVariables.set(\"sessionResp\", h(\"X-Session-Id\"));",
+                  "pm.collectionVariables.set(\"respId\", h(\"X-Chat-Id\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/responses",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "responses"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"auto\",\n  \"input\": \"客户申请退款，应该走哪个流程\"\n}"
+            }
+          }
+        },
+        {
+          "name": "②previous_response_id 续接",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const h = n => pm.response.headers.get(n);",
+                  "",
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"same session as the first response\", () => {",
+                  "  pm.expect(h(\"X-Session-Id\")).to.eql(pm.collectionVariables.get(\"sessionResp\"));",
+                  "  pm.expect(h(\"X-OpenAgent-Selected-Agent-Id\")).to.eql(\"finance\");",
+                  "  pm.expect(h(\"X-Chat-Id\")).to.match(/^resp_/);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/responses",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "responses"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"auto\",\n  \"input\": \"再按月份汇总\",\n  \"previous_response_id\": \"{{respId}}\"\n}"
+            }
+          }
+        },
+        {
+          "name": "未知 previous_response_id → 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const h = n => pm.response.headers.get(n);",
+                  "",
+                  "pm.test(\"status 404\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"OpenAI error envelope\", () => {",
+                  "  const e = pm.response.json().error;",
+                  "  pm.expect(e.type).to.eql(\"invalid_request_error\");",
+                  "  pm.expect(e.code).to.eql(\"conversation_not_found\");",
+                  "  pm.expect(e.message).to.be.a(\"string\").and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/responses",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "responses"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"auto\",\n  \"input\": \"x\",\n  \"previous_response_id\": \"resp_does_not_exist\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 Anthropic Messages 协议",
+      "description": "",
+      "item": [
+        {
+          "name": "POST /v1/messages（model=hr）",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const h = n => pm.response.headers.get(n);",
+                  "",
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"selected agent is hr\", () => pm.expect(h(\"X-OpenAgent-Selected-Agent-Id\")).to.eql(\"hr\"));",
+                  "pm.test(\"X-Session-Id is a UUID\", () => pm.expect(h(\"X-Session-Id\")).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/));",
+                  "pm.test(\"X-Chat-Id starts with msg_\", () => pm.expect(h(\"X-Chat-Id\")).to.match(/^msg_/));",
+                  "pm.test(\"downstream received model=hr and the same session id\", () => {",
+                  "  const echo = pm.response.json().message;",
+                  "  pm.expect(echo).to.include('\\\"model\\\":\\\"hr\\\"');",
+                  "  pm.expect(echo).to.include(h(\"X-Session-Id\"));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/messages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "messages"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"hr\",\n  \"max_tokens\": 256,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"公司的产假政策是什么\"\n    }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "POST /v1/messages（auto → hr）",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const h = n => pm.response.headers.get(n);",
+                  "",
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"selected agent is hr\", () => pm.expect(h(\"X-OpenAgent-Selected-Agent-Id\")).to.eql(\"hr\"));",
+                  "pm.test(\"X-Session-Id is a UUID\", () => pm.expect(h(\"X-Session-Id\")).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/));",
+                  "pm.test(\"X-Chat-Id starts with msg_\", () => pm.expect(h(\"X-Chat-Id\")).to.match(/^msg_/));",
+                  "pm.test(\"downstream received model=hr and the same session id\", () => {",
+                  "  const echo = pm.response.json().message;",
+                  "  pm.expect(echo).to.include('\\\"model\\\":\\\"hr\\\"');",
+                  "  pm.expect(echo).to.include(h(\"X-Session-Id\"));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/messages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "messages"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"auto\",\n  \"max_tokens\": 256,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": [\n        {\n          \"type\": \"text\",\n          \"text\": \"考勤打卡漏打了怎么补卡\"\n        }\n      ]\n    }\n  ]\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 流式",
+      "description": "",
+      "item": [
+        {
+          "name": "stream=true（SSE 透传，需看 Body）",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const h = n => pm.response.headers.get(n);",
+                  "",
+                  "pm.test(\"200 event-stream\", () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(h(\"Content-Type\")).to.include(\"text/event-stream\");",
+                  "});",
+                  "pm.test(\"ids are present before the first event\", () => {",
+                  "  pm.expect(h(\"X-Session-Id\")).to.match(/^[0-9a-f-]{36}$/);",
+                  "  pm.expect(h(\"X-Chat-Id\")).to.match(/^chatcmpl-/);",
+                  "});",
+                  "pm.test(\"body carries the chat id\", () => pm.expect(pm.response.text()).to.include(h(\"X-Chat-Id\")));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/chat/completions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"general\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"流式测试\"\n    }\n  ],\n  \"stream\": true\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "07 幂等与回落",
+      "description": "",
+      "item": [
+        {
+          "name": "Idempotency-Key ①首次",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"idemKey\", \"idem-\" + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set(\"idemChat\", pm.response.headers.get(\"X-Chat-Id\"));",
+                  "pm.collectionVariables.set(\"idemSession\", pm.response.headers.get(\"X-Session-Id\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idemKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/chat/completions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"general\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"幂等测试\"\n    }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "Idempotency-Key ②重放：同一会话、同一聊天 ID",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 replay\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"same session and chat id as the first call\", () => {",
+                  "  pm.expect(pm.response.headers.get(\"X-Chat-Id\")).to.eql(pm.collectionVariables.get(\"idemChat\"));",
+                  "  pm.expect(pm.response.headers.get(\"X-Session-Id\")).to.eql(pm.collectionVariables.get(\"idemSession\"));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idemKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/chat/completions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"general\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"幂等测试\"\n    }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "超长消息（>7500 字）→ 不调模型，回落默认 general",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"longText\", \"订单退款 \".repeat(1700));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const h = n => pm.response.headers.get(n);",
+                  "",
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"selected agent is general\", () => pm.expect(h(\"X-OpenAgent-Selected-Agent-Id\")).to.eql(\"general\"));",
+                  "pm.test(\"X-Session-Id is a UUID\", () => pm.expect(h(\"X-Session-Id\")).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/));",
+                  "pm.test(\"X-Chat-Id starts with chatcmpl-\", () => pm.expect(h(\"X-Chat-Id\")).to.match(/^chatcmpl-/));",
+                  "pm.test(\"downstream received model=general\", () => {",
+                  "  const echo = pm.response.json().message;",
+                  "  pm.expect(echo).to.include('\\\"model\\\":\\\"general\\\"');",
+                  "  pm.expect(echo).to.include(h(\"X-Session-Id\"));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/chat/completions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"model\":\"auto\",\"messages\":[{\"role\":\"user\",\"content\":\"{{longText}}\"}]}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "08 错误响应（OpenAI 格式）",
+      "description": "",
+      "item": [
+        {
+          "name": "未带凭据 → 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const h = n => pm.response.headers.get(n);",
+                  "",
+                  "pm.test(\"status 401\", () => pm.response.to.have.status(401));",
+                  "pm.test(\"OpenAI error envelope\", () => {",
+                  "  const e = pm.response.json().error;",
+                  "  pm.expect(e.type).to.eql(\"authentication_error\");",
+                  "  pm.expect(e.code).to.eql(\"authentication_required\");",
+                  "  pm.expect(e.message).to.be.a(\"string\").and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/chat/completions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"general\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"x\"\n    }\n  ]\n}"
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "密码错误 → 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const h = n => pm.response.headers.get(n);",
+                  "",
+                  "pm.test(\"status 401\", () => pm.response.to.have.status(401));",
+                  "pm.test(\"OpenAI error envelope\", () => {",
+                  "  const e = pm.response.json().error;",
+                  "  pm.expect(e.type).to.eql(\"authentication_error\");",
+                  "  pm.expect(e.code).to.eql(\"authentication_required\");",
+                  "  pm.expect(e.message).to.be.a(\"string\").and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic YWRtaW46d3Jvbmc="
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/chat/completions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"general\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"x\"\n    }\n  ]\n}"
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "GET /v1/models 未带凭据 → 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const h = n => pm.response.headers.get(n);",
+                  "",
+                  "pm.test(\"status 401\", () => pm.response.to.have.status(401));",
+                  "pm.test(\"OpenAI error envelope\", () => {",
+                  "  const e = pm.response.json().error;",
+                  "  pm.expect(e.type).to.eql(\"authentication_error\");",
+                  "  pm.expect(e.code).to.eql(\"authentication_required\");",
+                  "  pm.expect(e.message).to.be.a(\"string\").and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/models",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "models"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "未知会话 → 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const h = n => pm.response.headers.get(n);",
+                  "",
+                  "pm.test(\"status 404\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"OpenAI error envelope\", () => {",
+                  "  const e = pm.response.json().error;",
+                  "  pm.expect(e.type).to.eql(\"invalid_request_error\");",
+                  "  pm.expect(e.code).to.eql(\"conversation_not_found\");",
+                  "  pm.expect(e.message).to.be.a(\"string\").and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Session-Id",
+                "value": "00000000-0000-0000-0000-000000000000"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/chat/completions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"general\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"x\"\n    }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "会话 Agent 不可更改 → 409",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const h = n => pm.response.headers.get(n);",
+                  "",
+                  "pm.test(\"status 409\", () => pm.response.to.have.status(409));",
+                  "pm.test(\"OpenAI error envelope\", () => {",
+                  "  const e = pm.response.json().error;",
+                  "  pm.expect(e.type).to.eql(\"invalid_request_error\");",
+                  "  pm.expect(e.code).to.eql(\"conversation_provider_mismatch\");",
+                  "  pm.expect(e.message).to.be.a(\"string\").and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Session-Id",
+                "value": "{{sessionFinance}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/chat/completions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"hr\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"x\"\n    }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "未知 Agent → 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const h = n => pm.response.headers.get(n);",
+                  "",
+                  "pm.test(\"status 404\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"OpenAI error envelope\", () => {",
+                  "  const e = pm.response.json().error;",
+                  "  pm.expect(e.type).to.eql(\"invalid_request_error\");",
+                  "  pm.expect(e.code).to.eql(\"agent_not_found\");",
+                  "  pm.expect(e.message).to.be.a(\"string\").and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/chat/completions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"no-such-agent\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"x\"\n    }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "请求体不是合法 JSON → 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const h = n => pm.response.headers.get(n);",
+                  "",
+                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"OpenAI error envelope\", () => {",
+                  "  const e = pm.response.json().error;",
+                  "  pm.expect(e.type).to.eql(\"invalid_request_error\");",
+                  "  pm.expect(e.code).to.eql(\"invalid_routing_request\");",
+                  "  pm.expect(e.message).to.be.a(\"string\").and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/chat/completions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{not json"
+            }
+          }
+        },
+        {
+          "name": "auto 但没有用户文本 → 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const h = n => pm.response.headers.get(n);",
+                  "",
+                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"OpenAI error envelope\", () => {",
+                  "  const e = pm.response.json().error;",
+                  "  pm.expect(e.type).to.eql(\"invalid_request_error\");",
+                  "  pm.expect(e.code).to.eql(\"invalid_routing_request\");",
+                  "  pm.expect(e.message).to.be.a(\"string\").and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/chat/completions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"auto\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"only a system message\"\n    }\n  ]\n}"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
