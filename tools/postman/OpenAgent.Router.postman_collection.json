@@ -598,6 +598,94 @@
               "raw": "{\n  \"model\": \"auto\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"我的差旅报销单什么时候能批下来\"\n    },\n    {\n      \"role\": \"assistant\",\n      \"content\": \"一般 3 个工作日内。\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"那发票需要原件吗？\"\n    }\n  ]\n}"
             }
           }
+        },
+        {
+          "name": "确认类输入「好的，继续」+ 会话 → 跟随会话 Agent（不走意图识别）",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"stays on the session's agent\", () => {",
+                  "  pm.expect(pm.response.headers.get(\"X-Session-Id\")).to.eql(pm.collectionVariables.get(\"sessionFinance\"));",
+                  "  pm.expect(pm.response.headers.get(\"X-OpenAgent-Selected-Agent-Id\")).to.eql(\"finance\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Session-Id",
+                "value": "{{sessionFinance}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"auto\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"好的，继续\"\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/chat/completions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            }
+          }
+        },
+        {
+          "name": "确认类输入「ok」无会话 → 不调模型，回落默认 general",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"fallback agent, new session\", () => {",
+                  "  pm.expect(pm.response.headers.get(\"X-OpenAgent-Selected-Agent-Id\")).to.eql(\"general\");",
+                  "  pm.expect(pm.response.headers.get(\"X-Session-Id\")).to.not.eql(pm.collectionVariables.get(\"sessionFinance\"));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"auto\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"ok\"\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/chat/completions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "chat",
+                "completions"
+              ]
+            }
+          }
         }
       ]
     },

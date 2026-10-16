@@ -10,6 +10,7 @@ Router 对客户端暴露标准接口：`POST /v1/chat/completions`（OpenAI Cha
 - `model` 为具体 Agent ID 时，验证权限与可用性后直接使用，不调用模型。
 - Router 为每个会话生成会话 ID（`X-Session-Id`），为每次请求生成聊天 ID（`X-Chat-Id`，前缀 `chatcmpl-` / `resp_` / `msg_`）。两者随请求头传给下游，同时在响应头返回给客户端；CORS 暴露这两个头和 `X-OpenAgent-Selected-Agent-Id`。客户端自带的 `X-Chat-Id` 会被覆盖。
 - 续接已有会话，按顺序识别：请求头 `X-Session-Id`；Responses 的 `previous_response_id`（即 Router 返回过的聊天 ID）；Chat Completions / Messages 在历史里已有 assistant 消息时，按"该用户首条用户消息"的指纹找到会话。
+- 纯确认类输入（"ok"、"好的，继续"、"谢谢"等，`TrivialMessage` 的短语表）没有话题，不走意图识别：有会话时按会话续接，没有会话时直接用默认 Agent，不调用决策模型。
 - 已有会话从绑定取得 Provider 和 Agent，重新检查权限和可用性，不再调用模型；`model` 指定不同 Agent 返回 409。未知、过期、其他用户或其他租户的会话 ID 返回 404，不隐式创建。
 
 首次请求（客户端不带任何会话信息）：

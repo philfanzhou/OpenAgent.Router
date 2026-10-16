@@ -70,7 +70,9 @@ internal sealed class AgentSelectionService(
             }
             IReadOnlyList<AgentCatalogEntry> entries = await GetCatalogAsync(requestContext,
                 cancellationToken).ConfigureAwait(false);
-            string? agentId = options.Value.Enabled
+            // A bare "ok / 好的，继续" has no topic: skip the model and take the fallback agent.
+            bool trivial = TrivialMessage.IsTrivial(message);
+            string? agentId = options.Value.Enabled && !trivial
                 ? await intentAgentSelector.SelectAsync(requestContext, message,
                     entries.Select(entry => entry.Agent).ToArray(), cancellationToken).ConfigureAwait(false)
                 : null;
@@ -81,7 +83,7 @@ internal sealed class AgentSelectionService(
             {
                 selected = entries.FirstOrDefault(entry => string.Equals(
                     entry.Agent.AgentId, options.Value.FallbackAgentId, StringComparison.OrdinalIgnoreCase));
-                source = "fallback";
+                source = trivial ? "trivial" : "fallback";
             }
         }
         if (selected == null)
