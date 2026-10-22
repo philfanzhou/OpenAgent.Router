@@ -71,6 +71,8 @@ Router 转发前改写 `model`（`auto` 时填入选中的 Agent ID），并附�
 | `X-Chat-Id` | Router 为本次请求生成的聊天 ID，前缀 `chatcmpl-` / `resp_` / `msg_` |
 | `Authorization` | 用户原始令牌 |
 | `X-Trace-Id` | 链路追踪 |
+| `X-OpenAgent-Previous-Agent-Id` | 发生显式切换时的原 Agent |
+| `X-OpenAgent-Handoff-Summary` | 发生显式切换时由客户端提供、经 Router 校验长度后转发的上下文交接摘要 |
 
 下游要求：
 

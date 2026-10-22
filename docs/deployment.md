@@ -12,6 +12,7 @@ Router 对客户端暴露标准接口：`POST /v1/chat/completions`（OpenAI Cha
 - 续接已有会话，按顺序识别：请求头 `X-Session-Id`；Responses 的 `previous_response_id`（即 Router 返回过的聊天 ID）；Chat Completions / Messages 在历史里已有 assistant 消息时，按"该用户首条用户消息"的指纹找到会话。
 - 纯确认类输入（"ok"、"好的，继续"、"谢谢"等，`TrivialMessage` 的短语表）没有话题，不走意图识别：有会话时按会话续接，没有会话时直接用默认 Agent，不调用决策模型。
 - 已有会话从绑定取得 Provider 和 Agent，重新检查权限和可用性，不再调用模型；`model` 指定不同 Agent 返回 409。未知、过期、其他用户或其他租户的会话 ID 返回 404，不隐式创建。
+- 需要处理会话内意图漂移时，在已有会话请求上同时发送 `X-OpenAgent-Switch-Agent-Id` 和 `X-OpenAgent-Handoff-Summary`。Router 校验会话所有权、目标 Agent 权限和可用性后，以 Redis 条件事务原子换绑；当前请求立即交给新 Agent，后续请求继续命中新 Agent。Router 会移除客户端切换控制头，向下游发送可信的 `X-OpenAgent-Previous-Agent-Id` 与交接摘要，并在响应中返回前序 Agent。目标 Agent 与摘要必须成对出现，摘要上限 4000 字符。
 
 首次请求（客户端不带任何会话信息）：
 

@@ -64,6 +64,27 @@ public class ChatEndpointHandlerTests
     }
 
     [Fact]
+    public async Task ExplicitSwitch_ForwardsTrustedHandoffAndReturnsPreviousAgent()
+    {
+        var selection = new StubSelection(new AgentSelection(
+            "finance", "partner", "session-1", "general"));
+        var forwarder = new RecordingForwarder();
+        DefaultHttpContext context = CreateContext(Body);
+        context.Request.Headers["X-Session-Id"] = "session-1";
+        context.Request.Headers[ChatEndpointHandler.SwitchAgentHeader] = "finance";
+        context.Request.Headers[ChatEndpointHandler.HandoffSummaryHeader] = "Customer needs invoice help";
+        context.Request.Headers[ChatEndpointHandler.PreviousAgentHeader] = "spoofed";
+
+        await HandleAsync(ChatProtocol.ChatCompletions, context, selection, forwarder, Authenticated);
+
+        Assert.Equal("finance", selection.SwitchAgentId);
+        Assert.Equal("general", forwarder.PreviousAgentId);
+        Assert.Equal("Customer needs invoice help", forwarder.HandoffSummary);
+        Assert.False(context.Request.Headers.ContainsKey(ChatEndpointHandler.SwitchAgentHeader));
+        Assert.Equal("general", context.Response.Headers[ChatEndpointHandler.PreviousAgentHeader].ToString());
+    }
+
+    [Fact]
     public async Task ClientSuppliedChatId_IsReplacedByIssuedId()
     {
         DefaultHttpContext context = CreateContext(Body);
@@ -130,13 +151,16 @@ public class ChatEndpointHandlerTests
         public string? Message { get; private set; }
         public string? ExplicitAgentId { get; private set; }
         public ChatProtocol? Protocol { get; private set; }
+        public string? SwitchAgentId { get; private set; }
 
         public Task<AgentSelection?> SelectAsync(string message, string? conversationId, string? explicitAgentId,
-            CancellationToken cancellationToken, string? authenticationToken = null, ChatProtocol? protocol = null)
+            CancellationToken cancellationToken, string? authenticationToken = null, ChatProtocol? protocol = null,
+            string? switchAgentId = null)
         {
             Message = message;
             ExplicitAgentId = explicitAgentId;
             Protocol = protocol;
+            SwitchAgentId = switchAgentId;
             return outcome is AgentRoutingException exception
                 ? Task.FromException<AgentSelection?>(exception)
                 : Task.FromResult((AgentSelection?)outcome);
@@ -161,6 +185,8 @@ public class ChatEndpointHandlerTests
         public bool Streaming { get; private set; }
         public string? SessionId { get; private set; }
         public string? ForwardedBody { get; private set; }
+        public string? PreviousAgentId { get; private set; }
+        public string? HandoffSummary { get; private set; }
 
         public async Task ForwardAsync(HttpContext context, IAgentProvider provider, ChatProtocol protocol,
             bool streaming, string? sessionId, CancellationToken cancellationToken)
@@ -168,6 +194,8 @@ public class ChatEndpointHandlerTests
             CallCount++;
             Streaming = streaming;
             SessionId = sessionId;
+            PreviousAgentId = context.Request.Headers[ChatEndpointHandler.PreviousAgentHeader];
+            HandoffSummary = context.Request.Headers[ChatEndpointHandler.HandoffSummaryHeader];
             using var reader = new StreamReader(context.Request.Body, leaveOpen: true);
             ForwardedBody = await reader.ReadToEndAsync(cancellationToken);
         }

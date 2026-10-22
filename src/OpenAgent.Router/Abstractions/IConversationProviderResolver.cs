@@ -30,4 +30,11 @@ internal interface IConversationProviderResolver
         string agentId,
         string sessionId,
         CancellationToken cancellationToken = default);
+    Task<ConversationProviderAffinity> SwitchAsync(
+        AgentProviderRequestContext requestContext,
+        string conversationId,
+        ConversationProviderAffinity expected,
+        string providerId,
+        string agentId,
+        CancellationToken cancellationToken = default);
 }

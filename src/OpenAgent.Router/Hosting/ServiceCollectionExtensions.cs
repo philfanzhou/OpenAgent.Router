@@ -57,7 +57,11 @@ public static class ServiceCollectionExtensions
                         .WithOrigins(options.CorsAllowedOrigins)
                         .AllowAnyMethod()
                         .AllowAnyHeader()
-                        .WithExposedHeaders("X-OpenAgent-Selected-Agent-Id", "X-Conversation-Id")
+                        .WithExposedHeaders(
+                            "X-Session-Id",
+                            "X-Chat-Id",
+                            "X-OpenAgent-Selected-Agent-Id",
+                            "X-OpenAgent-Previous-Agent-Id")
                         .AllowCredentials()
                         .SetPreflightMaxAge(TimeSpan.FromMinutes(30));
                 });

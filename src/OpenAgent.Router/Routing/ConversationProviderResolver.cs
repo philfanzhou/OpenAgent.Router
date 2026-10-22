@@ -75,6 +75,33 @@ internal sealed class ConversationProviderResolver(
             },
             cancellationToken);
 
+    public Task<ConversationProviderAffinity> SwitchAsync(
+        AgentProviderRequestContext requestContext,
+        string conversationId,
+        ConversationProviderAffinity expected,
+        string providerId,
+        string agentId,
+        CancellationToken cancellationToken) => WithStorageTimeoutAsync(
+            async token =>
+            {
+                var replacement = expected with
+                {
+                    ProviderId = providerId,
+                    AgentId = agentId,
+                    State = ConversationAffinityState.Confirmed
+                };
+                ConversationProviderAffinity current = await store.CompareExchangeAsync(
+                    RequireTenantId(requestContext), conversationId, expected, replacement, token).ConfigureAwait(false);
+                if (current != replacement)
+                {
+                    throw new AgentRoutingException(StatusCodes.Status409Conflict,
+                        RouterErrorCodes.ConversationSwitchConflict,
+                        "Conversation changed while the Agent switch was being applied");
+                }
+                return current;
+            },
+            cancellationToken);
+
     private ConversationProviderAffinity NewAffinity(AgentProviderRequestContext requestContext,
         string providerId, string agentId, string? sessionId) =>
         new(providerId, ConversationAffinityState.Confirmed, agentId, requestContext.UserContext.UserId,

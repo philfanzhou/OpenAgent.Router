@@ -13,6 +13,10 @@ namespace OpenAgent.Router.Endpoints;
 internal static class ChatEndpointHandler
 {
     internal const string ChatHeader = "X-Chat-Id";
+    internal const string SwitchAgentHeader = "X-OpenAgent-Switch-Agent-Id";
+    internal const string HandoffSummaryHeader = "X-OpenAgent-Handoff-Summary";
+    internal const string PreviousAgentHeader = "X-OpenAgent-Previous-Agent-Id";
+    private const int MaxHandoffSummaryCharacters = 4000;
     private const string AutoModel = "auto";
     private const int MaxBodyBytes = 32 * 1024 * 1024;
 
@@ -37,12 +41,18 @@ internal static class ChatEndpointHandler
         }
 
         string? authorization = context.Request.Headers.Authorization.FirstOrDefault();
+        string? switchAgentId = context.Request.Headers[SwitchAgentHeader].FirstOrDefault()?.Trim();
+        string? handoffSummary = context.Request.Headers[HandoffSummaryHeader].FirstOrDefault()?.Trim();
+        context.Request.Headers.Remove(SwitchAgentHeader);
+        context.Request.Headers.Remove(HandoffSummaryHeader);
+        context.Request.Headers.Remove(PreviousAgentHeader);
         AgentProviderRequestContext requestContext = new(userContext, authorization, protocol);
         ChatRequestInfo info;
         AgentSelection? selection;
         string chatId = ChatProtocols.ChatIdPrefix(protocol) + Guid.NewGuid().ToString("N");
         try
         {
+            ValidateSwitchRequest(switchAgentId, handoffSummary);
             info = ChatRequestParser.Parse(protocol, await ReadBodyAsync(context.Request, cancellationToken)
                 .ConfigureAwait(false));
             string? sessionId = await sessions.FindSessionAsync(requestContext, info,
@@ -55,7 +65,8 @@ internal static class ChatEndpointHandler
                     ? null : info.Model,
                 cancellationToken,
                 authorization,
-                protocol).ConfigureAwait(false);
+                protocol,
+                switchAgentId).ConfigureAwait(false);
             if (selection != null)
             {
                 await sessions.RememberAsync(requestContext, protocol, info, selection, chatId, cancellationToken)
@@ -82,14 +93,19 @@ internal static class ChatEndpointHandler
         }
 
         string sessionIdOut = selection.ConversationId!;
+        if (selection.PreviousAgentId != null)
+        {
+            context.Request.Headers[PreviousAgentHeader] = selection.PreviousAgentId;
+            context.Request.Headers[HandoffSummaryHeader] = handoffSummary!;
+        }
         info.Root["model"] = selection.AgentId;
         byte[] forwarded = System.Text.Encoding.UTF8.GetBytes(info.Root.ToJsonString());
         context.Request.Headers[ChatSessionTracker.SessionHeader] = sessionIdOut;
         context.Request.Headers[ChatHeader] = chatId;
-        SetResponseHeaders(context, sessionIdOut, chatId, selection.AgentId!);
+        SetResponseHeaders(context, sessionIdOut, chatId, selection.AgentId!, selection.PreviousAgentId);
         context.Response.OnStarting(() =>
         {
-            SetResponseHeaders(context, sessionIdOut, chatId, selection.AgentId!);
+            SetResponseHeaders(context, sessionIdOut, chatId, selection.AgentId!, selection.PreviousAgentId);
             return Task.CompletedTask;
         });
 
@@ -106,11 +122,26 @@ internal static class ChatEndpointHandler
         return Results.Empty;
     }
 
-    private static void SetResponseHeaders(HttpContext context, string sessionId, string chatId, string agentId)
+    private static void SetResponseHeaders(
+        HttpContext context, string sessionId, string chatId, string agentId, string? previousAgentId)
     {
         context.Response.Headers[ChatSessionTracker.SessionHeader] = sessionId;
         context.Response.Headers[ChatHeader] = chatId;
         context.Response.Headers["X-OpenAgent-Selected-Agent-Id"] = agentId;
+        if (previousAgentId != null) context.Response.Headers[PreviousAgentHeader] = previousAgentId;
+    }
+
+    private static void ValidateSwitchRequest(string? switchAgentId, string? handoffSummary)
+    {
+        bool hasTarget = !string.IsNullOrWhiteSpace(switchAgentId);
+        bool hasSummary = !string.IsNullOrWhiteSpace(handoffSummary);
+        if (hasTarget != hasSummary || switchAgentId?.Length > 256
+            || handoffSummary?.Length > MaxHandoffSummaryCharacters)
+        {
+            throw new AgentRoutingException(StatusCodes.Status400BadRequest,
+                RouterErrorCodes.InvalidRoutingRequest,
+                "Agent switches require a bounded target Agent and handoff summary");
+        }
     }
 
     private static async Task<byte[]> ReadBodyAsync(HttpRequest request, CancellationToken cancellationToken)

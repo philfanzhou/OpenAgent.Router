@@ -42,6 +42,8 @@ internal static class RouterMeter
         "openagent_router_agent_selections_total");
     private static readonly Counter<long> MisroutesTotal = Meter.CreateCounter<long>(
         "openagent_router_misroutes_total");
+    private static readonly Counter<long> AgentSwitchesTotal = Meter.CreateCounter<long>(
+        "openagent_router_agent_switches_total");
     private static readonly Histogram<int> CandidatePreselectionCount = Meter.CreateHistogram<int>(
         "openagent_router_candidate_preselection_count");
 
@@ -149,6 +151,15 @@ internal static class RouterMeter
         });
     }
 
+    public static void RecordAgentSwitch(string previousAgentId, string agentId)
+    {
+        AgentSwitchesTotal.Add(1, new TagList
+        {
+            { "previous_agent_id", NormalizeAgentId(previousAgentId) },
+            { "agent_id", NormalizeAgentId(agentId) }
+        });
+    }
+
     public static void RecordCandidatePreselection(int originalCount, int selectedCount)
     {
         CandidatePreselectionCount.Record(selectedCount, new TagList
@@ -191,6 +202,7 @@ internal static class RouterMeter
     {
         "explicit" => "explicit",
         "conversation" => "conversation",
+        "switch" => "switch",
         "intent" => "intent",
         "model" => "model",
         "fallback" => "fallback",

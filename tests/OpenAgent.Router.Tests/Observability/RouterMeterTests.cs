@@ -61,6 +61,7 @@ public class RouterMeterTests
         RouterMeter.RecordDecision(0.75, TimeSpan.FromMilliseconds(125), "Selected");
         RouterMeter.RecordAgentSelection("Finance", "Model");
         RouterMeter.RecordMisroute("Finance", "HR");
+        RouterMeter.RecordAgentSwitch("General", "Finance");
         RouterMeter.RecordCandidatePreselection(120, 62);
         RouterMeter.RecordAclDenial();
         RouterMeter.RecordCacheHit("Query");
@@ -119,6 +120,10 @@ public class RouterMeterTests
             measurement.Name == "openagent_router_misroutes_total"
             && Equals(measurement.Tags["selected_agent_id"], "finance")
             && Equals(measurement.Tags["expected_agent_id"], "hr"));
+        Assert.Contains(measurements, measurement =>
+            measurement.Name == "openagent_router_agent_switches_total"
+            && Equals(measurement.Tags["previous_agent_id"], "general")
+            && Equals(measurement.Tags["agent_id"], "finance"));
         Assert.Contains(measurements, measurement =>
             measurement.Name == "openagent_router_candidate_preselection_count"
             && measurement.Value == 62
