@@ -39,7 +39,7 @@
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
         "RouterSettings__AgentProviders__Providers__0__Settings__BaseUrl": "http://localhost:5290",
-        "RouterSettings__DecisionModel__Endpoint": "http://192.168.2.159:7860/v1/decide",
+        "RouterSettings__DecisionModel__Endpoint": "http://10.51.1.106:8000/v1/decide",
         "RouterSettings__IntentRecognition__FallbackAgentId": "general"
       }
     }

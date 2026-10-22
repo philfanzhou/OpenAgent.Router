@@ -35,7 +35,8 @@ public class IntentAgentSelectorTests
             new AgentUserContext { UserId = "user", TenantId = "tenant" }, "Bearer caller-secret"),
             "find invoice", Candidates, CancellationToken.None);
         Assert.Equal("finance", result);
-        Assert.Equal("Bearer routing-secret", handler.Authorization);
+        Assert.Equal("routing-secret", handler.ApiKey);
+        Assert.Null(handler.Authorization);
         using var body = JsonDocument.Parse(handler.RequestBody!);
         Assert.Contains("find invoice", body.RootElement.GetProperty("state").GetString());
         JsonElement question = body.RootElement.GetProperty("questions").GetProperty("agent");
@@ -110,11 +111,13 @@ public class IntentAgentSelectorTests
         public HttpStatusCode Status { get; init; } = HttpStatusCode.OK;
         public bool Delay { get; init; }
         public string? RequestBody { get; private set; }
+        public string? ApiKey { get; private set; }
         public string? Authorization { get; private set; }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
         {
             if (Delay) await Task.Delay(Timeout.Infinite, token);
             RequestBody = await request.Content!.ReadAsStringAsync(token);
+            ApiKey = request.Headers.GetValues("X-API-Key").SingleOrDefault();
             Authorization = request.Headers.Authorization?.ToString();
             return new HttpResponseMessage(Status)
             {

@@ -1,4 +1,3 @@
-using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
@@ -47,7 +46,7 @@ internal sealed class IntentAgentSelector(
                 : (await File.ReadAllTextAsync(options.ApiKeyFile, timeout.Token).ConfigureAwait(false)).Trim();
             if (!string.IsNullOrEmpty(apiKey))
             {
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+                request.Headers.Add("X-API-Key", apiKey);
             }
             // Never forward the caller's credentials, model profile or arbitrary context to the model.
             // jev choice question: criteria maps each candidate agent ID to what it handles.

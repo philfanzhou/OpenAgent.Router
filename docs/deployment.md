@@ -61,7 +61,7 @@ Router 只内置 `OpenAgentEngine` 这一种 Provider 类型：下游用标准 O
 | --- | --- | --- |
 | `ConnectionStrings:Redis` | 无 | 非 Development 环境必填；开发环境可使用进程内存储 |
 | `RouterSettings:DecisionModel:Endpoint` | 空 | 完整模型请求 URL |
-| `RouterSettings:DecisionModel:ApiKey` | 空 | 专用密钥；本地无鉴权网关可留空 |
+| `RouterSettings:DecisionModel:ApiKey` | 空 | 专用密钥；配置后通过 `X-API-Key` 请求头发送，本地无鉴权网关可留空 |
 | `RouterSettings:DecisionModel:ApiKeyFile` | 空 | 可选 Secret 文件；设置后优先从文件读取 |
 | `RouterSettings:DecisionModel:MaxPromptCharacters` | 16000 | 自动选择的 prompt 上限 |
 | `RouterSettings:DecisionModel:MaxInputCharacters` | 7500 | 消息、指令与全部候选的估算总长（1 字符按 1 token）；决策模型上限 8192 token 且不截断，超出则不调用模型，直接走默认 Agent |
