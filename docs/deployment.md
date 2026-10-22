@@ -65,7 +65,7 @@ Router 只内置 `OpenAgentEngine` 这一种 Provider 类型：下游用标准 O
 | `RouterSettings:DecisionModel:ApiKeyFile` | 空 | 可选 Secret 文件；设置后优先从文件读取 |
 | `RouterSettings:DecisionModel:MaxPromptCharacters` | 16000 | 自动选择的 prompt 上限 |
 | `RouterSettings:DecisionModel:MaxInputCharacters` | 7500 | 消息、指令与全部候选的估算总长（1 字符按 1 token）；决策模型上限 8192 token 且不截断，超出则不调用模型，直接走默认 Agent |
-| `RouterSettings:DecisionModel:MaxCandidates` | 100 | 候选总数上限，不静默截断 |
+| `RouterSettings:DecisionModel:MaxCandidates` | 62 | 发送给决策模型的候选上限；目录或输入超限时先以本地 feature-hashing embedding 粗排，再由决策模型精选 |
 | `RouterSettings:DecisionModel:MaxDescriptionCharacters` | 2000 | 单条候选描述上限；名称上限 256 字符 |
 | `RouterSettings:DecisionModel:MaxResponseBytes` | 16384 | 模型响应体上限 |
 | `RouterSettings:IntentRecognition:TimeoutMs` | 5000 | 模型请求预算 |

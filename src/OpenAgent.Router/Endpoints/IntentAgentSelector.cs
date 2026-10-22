@@ -27,11 +27,29 @@ internal sealed class IntentAgentSelector(
         CancellationToken cancellationToken)
     {
         DecisionModelOptions options = modelOptions.Value;
-        if (candidates.Count == 0 || candidates.Count > options.MaxCandidates
-            || message.Length > options.MaxPromptCharacters
-            || EstimateInputCharacters(message, candidates) > options.MaxInputCharacters
+        if (candidates.Count == 0 || message.Length > options.MaxPromptCharacters
             || candidates.Any(candidate => candidate.Description?.Length > options.MaxDescriptionCharacters
                 || candidate.Name?.Length > 256))
+        {
+            return null;
+        }
+
+        IReadOnlyList<AgentSummary> modelCandidates = candidates;
+        if (candidates.Count > options.MaxCandidates
+            || EstimateInputCharacters(message, candidates) > options.MaxInputCharacters)
+        {
+            modelCandidates = CandidateEmbeddingPreselector.Select(message, candidates, options.MaxCandidates);
+            while (modelCandidates.Count > 1
+                && EstimateInputCharacters(message, modelCandidates) > options.MaxInputCharacters)
+            {
+                modelCandidates = modelCandidates.Take(modelCandidates.Count - 1).ToArray();
+            }
+            logger.LogInformation(
+                "Router candidate embedding preselection reduced catalog from {CatalogCount} to {CandidateCount}",
+                candidates.Count, modelCandidates.Count);
+        }
+        if (modelCandidates.Count == 0
+            || EstimateInputCharacters(message, modelCandidates) > options.MaxInputCharacters)
         {
             return null;
         }
@@ -59,7 +77,7 @@ internal sealed class IntentAgentSelector(
                     {
                         type = "choice",
                         instructions = Instructions,
-                        criteria = candidates.ToDictionary(
+                        criteria = modelCandidates.ToDictionary(
                             agent => agent.AgentId,
                             agent => string.IsNullOrWhiteSpace(agent.Description) ? agent.Name ?? agent.AgentId : agent.Description,
                             StringComparer.OrdinalIgnoreCase)
@@ -85,7 +103,7 @@ internal sealed class IntentAgentSelector(
             IntentRecognitionResult? result = new(
                 answer.GetProperty("choice").GetString()!,
                 answer.GetProperty("confidence").GetDouble());
-            return Report(ValidateResult(result, candidates, routingOptions.Value.MinimumConfidence));
+            return Report(ValidateResult(result, modelCandidates, routingOptions.Value.MinimumConfidence));
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {

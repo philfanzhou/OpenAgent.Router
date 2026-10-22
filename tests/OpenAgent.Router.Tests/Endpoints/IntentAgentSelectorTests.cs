@@ -86,6 +86,31 @@ public class IntentAgentSelectorTests
     }
 
     [Fact]
+    public async Task OversizedCatalog_UsesEmbeddingPreselectionBeforeDecisionModel()
+    {
+        AgentSummary[] candidates =
+        [
+            .. Enumerable.Range(0, 8).Select(index => new AgentSummary
+            {
+                AgentId = $"generic-{index}",
+                Description = $"General unrelated capability {index}"
+            }),
+            new() { AgentId = "finance", Description = "Invoice reimbursement and billing support" }
+        ];
+        var handler = new Handler();
+        var selector = Create(handler, maxCandidates: 3);
+
+        string? result = await selector.SelectAsync(
+            Context(), "help with an invoice reimbursement", candidates, CancellationToken.None);
+
+        Assert.Equal("finance", result);
+        using var body = JsonDocument.Parse(handler.RequestBody!);
+        JsonElement criteria = body.RootElement.GetProperty("questions").GetProperty("agent").GetProperty("criteria");
+        Assert.True(criteria.TryGetProperty("finance", out _));
+        Assert.InRange(criteria.EnumerateObject().Count(), 1, 3);
+    }
+
+    [Fact]
     public async Task OversizedResponse_ReturnsNoSelection()
     {
         var selector = Create(new Handler { Content = "{\"pad\":\"" + new string('x', 20000) + "\"}" });
@@ -93,10 +118,10 @@ public class IntentAgentSelectorTests
     }
 
     private static AgentProviderRequestContext Context() => new(new AgentUserContext { UserId = "user", TenantId = "tenant" });
-    private static IntentAgentSelector Create(Handler handler, int timeoutMs = 1000) => new(
+    private static IntentAgentSelector Create(Handler handler, int timeoutMs = 1000, int maxCandidates = 62) => new(
         new ClientFactory(handler), Microsoft.Extensions.Options.Options.Create(new DecisionModelOptions
         {
-            Endpoint = "http://model/v1/decisions", ApiKey = "routing-secret"
+            Endpoint = "http://model/v1/decisions", ApiKey = "routing-secret", MaxCandidates = maxCandidates
         }), Microsoft.Extensions.Options.Options.Create(new IntentRecognitionOptions { TimeoutMs = timeoutMs }),
         NullLogger<IntentAgentSelector>.Instance);
 
