@@ -68,6 +68,10 @@ Router 只内置 `OpenAgentEngine` 这一种 Provider 类型：下游用标准 O
 | `RouterSettings:DecisionModel:MaxCandidates` | 62 | 发送给决策模型的候选上限；目录或输入超限时先以本地 feature-hashing embedding 粗排，再由决策模型精选 |
 | `RouterSettings:DecisionModel:MaxDescriptionCharacters` | 2000 | 单条候选描述上限；名称上限 256 字符 |
 | `RouterSettings:DecisionModel:MaxResponseBytes` | 16384 | 模型响应体上限 |
+| `RouterSettings:RoutingQuality:SampleRetentionDays` | 30 | 误路由反馈样本在 Redis 中的保留天数 |
+| `RouterSettings:RoutingQuality:MaxSamplesPerTenant` | 1000 | 每租户最多保留的误路由样本数 |
+| `RouterSettings:RoutingQuality:MaxMessageCharacters` | 4000 | 反馈消息最大字符数 |
+| `RouterSettings:RoutingQuality:IncludeMessageContent` | false | 是否在样本中保留消息原文；默认只保留 SHA-256 |
 | `RouterSettings:IntentRecognition:TimeoutMs` | 5000 | 模型请求预算 |
 | `RouterSettings:IntentRecognition:CatalogTimeoutMs` | 3000 | 目录与 ACL 查询预算 |
 | `RouterSettings:IntentRecognition:MinimumConfidence` | 0.5 | 接受模型结果的阈值，不代表校准后的正确率 |

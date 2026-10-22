@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
@@ -47,6 +48,7 @@ internal sealed class IntentAgentSelector(
             logger.LogInformation(
                 "Router candidate embedding preselection reduced catalog from {CatalogCount} to {CandidateCount}",
                 candidates.Count, modelCandidates.Count);
+            RouterMeter.RecordCandidatePreselection(candidates.Count, modelCandidates.Count);
         }
         if (modelCandidates.Count == 0
             || EstimateInputCharacters(message, modelCandidates) > options.MaxInputCharacters)
@@ -54,6 +56,7 @@ internal sealed class IntentAgentSelector(
             return null;
         }
 
+        long decisionStarted = Stopwatch.GetTimestamp();
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(routingOptions.Value.TimeoutMs);
         try
@@ -97,22 +100,31 @@ internal sealed class IntentAgentSelector(
                 if (read == 0) break;
                 count += read;
             }
-            if (count > options.MaxResponseBytes) return Report(null);
+            if (count > options.MaxResponseBytes)
+            {
+                RouterMeter.RecordDecision(null, Stopwatch.GetElapsedTime(decisionStarted), "oversized_response");
+                return Report(null);
+            }
             using JsonDocument body = JsonDocument.Parse(buffer.AsMemory(0, count));
             JsonElement answer = body.RootElement.GetProperty("answers").GetProperty(QuestionKey);
             IntentRecognitionResult? result = new(
                 answer.GetProperty("choice").GetString()!,
                 answer.GetProperty("confidence").GetDouble());
-            return Report(ValidateResult(result, modelCandidates, routingOptions.Value.MinimumConfidence));
+            string? selected = ValidateResult(result, modelCandidates, routingOptions.Value.MinimumConfidence);
+            RouterMeter.RecordDecision(result.Confidence, Stopwatch.GetElapsedTime(decisionStarted),
+                selected != null ? "selected" : "rejected");
+            return Report(selected);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
+            RouterMeter.RecordDecision(null, Stopwatch.GetElapsedTime(decisionStarted), "timeout");
             logger.LogWarning("Router decision model timed out; using configured fallback policy");
             return Report(null);
         }
         catch (Exception exception) when (exception is HttpRequestException or JsonException
             or InvalidOperationException or KeyNotFoundException or IndexOutOfRangeException or IOException)
         {
+            RouterMeter.RecordDecision(null, Stopwatch.GetElapsedTime(decisionStarted), "failure");
             // Log the category only: exception messages from gateways may contain request data or secrets.
             logger.LogWarning("Router decision model failed ({FailureType}); using configured fallback policy",
                 exception.GetType().Name);

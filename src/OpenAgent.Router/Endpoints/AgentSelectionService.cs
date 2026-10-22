@@ -48,6 +48,7 @@ internal sealed class AgentSelectionService(
                     RouterErrorCodes.AgentProviderUnavailable, "Conversation Agent is unavailable on its original Provider");
             }
             RouterMeter.RecordProviderSelection("conversation");
+            RouterMeter.RecordAgentSelection(entry.Agent.AgentId, "conversation");
             logger?.LogInformation("Agent route selected: {SelectionSource} {ProviderId} {AgentId}",
                 "conversation", affinity.ProviderId, entry.Agent.AgentId);
             return new AgentSelection(entry.Agent.AgentId, affinity.ProviderId, conversationId);
@@ -102,6 +103,7 @@ internal sealed class AgentSelectionService(
                 RouterErrorCodes.ConversationStorageUnavailable, "Conversation could not be created");
         }
         RouterMeter.RecordProviderSelection(source);
+        RouterMeter.RecordAgentSelection(selected.Agent.AgentId, source);
         logger?.LogInformation("Agent route selected: {SelectionSource} {ProviderId} {AgentId}",
             source, selected.ProviderId, selected.Agent.AgentId);
         return new AgentSelection(selected.Agent.AgentId, selected.ProviderId, newConversationId);

@@ -27,6 +27,13 @@ public class RouterMeterTests
                 value,
                 tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value)));
         });
+        listener.SetMeasurementEventCallback<int>((instrument, value, tags, _) =>
+        {
+            measurements.Add((
+                instrument.Name,
+                value,
+                tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value)));
+        });
         listener.SetMeasurementEventCallback<double>((instrument, value, tags, _) =>
         {
             durations.Add((
@@ -51,6 +58,10 @@ public class RouterMeterTests
             "Fail_Closed"));
         RouterMeter.RecordDownstreamProbe("Not_Ready");
         RouterMeter.RecordProviderSelection("Explicit");
+        RouterMeter.RecordDecision(0.75, TimeSpan.FromMilliseconds(125), "Selected");
+        RouterMeter.RecordAgentSelection("Finance", "Model");
+        RouterMeter.RecordMisroute("Finance", "HR");
+        RouterMeter.RecordCandidatePreselection(120, 62);
         RouterMeter.RecordAclDenial();
         RouterMeter.RecordCacheHit("Query");
 
@@ -93,6 +104,25 @@ public class RouterMeterTests
         Assert.Contains(measurements, measurement =>
             measurement.Name == "openagent_router_provider_selections_total"
             && Equals(measurement.Tags["source"], "explicit"));
+        Assert.Contains(durations, measurement =>
+            measurement.Name == "openagent_router_decision_confidence"
+            && measurement.Value == 0.75
+            && Equals(measurement.Tags["outcome"], "selected"));
+        Assert.Contains(durations, measurement =>
+            measurement.Name == "openagent_router_decision_duration_seconds"
+            && measurement.Value == 0.125);
+        Assert.Contains(measurements, measurement =>
+            measurement.Name == "openagent_router_agent_selections_total"
+            && Equals(measurement.Tags["agent_id"], "finance")
+            && Equals(measurement.Tags["source"], "model"));
+        Assert.Contains(measurements, measurement =>
+            measurement.Name == "openagent_router_misroutes_total"
+            && Equals(measurement.Tags["selected_agent_id"], "finance")
+            && Equals(measurement.Tags["expected_agent_id"], "hr"));
+        Assert.Contains(measurements, measurement =>
+            measurement.Name == "openagent_router_candidate_preselection_count"
+            && measurement.Value == 62
+            && Equals(measurement.Tags["catalog_size"], "le_500"));
         Assert.Contains(measurements, measurement =>
             measurement.Name == "openagent_router_acl_denials_total"
             && Equals(measurement.Tags["reason"], "agent_acl"));
