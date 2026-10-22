@@ -20,4 +20,10 @@ internal interface IConversationProviderStore
         string conversationId,
         ConversationProviderAffinity affinity,
         CancellationToken cancellationToken = default);
+    Task<ConversationProviderAffinity> CompareExchangeAsync(
+        string tenantId,
+        string conversationId,
+        ConversationProviderAffinity expected,
+        ConversationProviderAffinity replacement,
+        CancellationToken cancellationToken = default);
 }

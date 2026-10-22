@@ -92,6 +92,8 @@ public sealed class TestEngineHost(string responseName) : IAsyncDisposable
     public string? LastTenantId { get; private set; }
 
     public string? LastAuthorization { get; private set; }
+    public string? LastPreviousAgentId { get; private set; }
+    public string? LastHandoffSummary { get; private set; }
 
     public string? UploadedFileName { get; private set; }
 
@@ -144,6 +146,8 @@ public sealed class TestEngineHost(string responseName) : IAsyncDisposable
                 LastAuthorization = context.Request.Headers.Authorization.FirstOrDefault();
                 LastSessionId = context.Request.Headers["X-Session-Id"].FirstOrDefault();
                 LastChatId = context.Request.Headers["X-Chat-Id"].FirstOrDefault();
+                LastPreviousAgentId = context.Request.Headers["X-OpenAgent-Previous-Agent-Id"].FirstOrDefault();
+                LastHandoffSummary = context.Request.Headers["X-OpenAgent-Handoff-Summary"].FirstOrDefault();
                 LastChatPath = context.Request.Path;
                 using var bodyReader = new StreamReader(context.Request.Body);
                 LastChatBody = await bodyReader.ReadToEndAsync(context.RequestAborted);

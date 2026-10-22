@@ -71,6 +71,8 @@ Router 转发前改写 `model`（`auto` 时填入选中的 Agent ID），并附�
 | `X-Chat-Id` | Router 为本次请求生成的聊天 ID，前缀 `chatcmpl-` / `resp_` / `msg_` |
 | `Authorization` | 用户原始令牌 |
 | `X-Trace-Id` | 链路追踪 |
+| `X-OpenAgent-Previous-Agent-Id` | 发生显式切换时的原 Agent |
+| `X-OpenAgent-Handoff-Summary` | 发生显式切换时由客户端提供、经 Router 校验长度后转发的上下文交接摘要 |
 
 下游要求：
 
@@ -95,7 +97,7 @@ Router 转发前改写 `model`（`auto` 时填入选中的 Agent ID），并附�
 
 ## 4. 决策模型调用
 
-`RouterSettings:DecisionModel:Endpoint` 填完整 URL，当前为 `http://192.168.2.159:7860/v1/decide`。Router 发送：
+`RouterSettings:DecisionModel:Endpoint` 填完整 URL，例如 `http://10.51.1.106:8000/v1/decide`。配置 `RouterSettings:DecisionModel:ApiKey` 后，Router 自动通过 `X-API-Key` 请求头发送密钥。Router 发送：
 
 ```json
 {

@@ -94,6 +94,34 @@ public sealed class RouterHostIntegrationTests : IClassFixture<RouterHostFixture
         Assert.Equal(before + 1, _fixture.PrimaryEngine.DecisionCount);
     }
 
+    [Fact]
+    public async Task ExplicitSwitch_HandsOffContextAndKeepsNewAgent()
+    {
+        using var factory = _fixture.CreateFactory(settings: ModelSettings());
+        using var client = factory.CreateClient();
+        int decisions = _fixture.PrimaryEngine.DecisionCount;
+        using var first = await client.SendAsync(CreateChatRequest("hello", model: "default"));
+        string session = first.Headers.GetValues("X-Session-Id").Single();
+        using var switchRequest = CreateChatRequest("check invoice", model: "auto");
+        switchRequest.Headers.Add("X-Session-Id", session);
+        switchRequest.Headers.Add("X-OpenAgent-Switch-Agent-Id", "finance");
+        switchRequest.Headers.Add("X-OpenAgent-Handoff-Summary", "Customer now needs invoice help");
+
+        using var switched = await client.SendAsync(switchRequest);
+
+        Assert.Equal(HttpStatusCode.OK, switched.StatusCode);
+        Assert.Equal("finance", switched.Headers.GetValues("X-OpenAgent-Selected-Agent-Id").Single());
+        Assert.Equal("default", switched.Headers.GetValues("X-OpenAgent-Previous-Agent-Id").Single());
+        Assert.Equal("default", _fixture.PrimaryEngine.LastPreviousAgentId);
+        Assert.Equal("Customer now needs invoice help", _fixture.PrimaryEngine.LastHandoffSummary);
+
+        using var followUp = CreateChatRequest("more", model: "auto");
+        followUp.Headers.Add("X-Session-Id", session);
+        using var next = await client.SendAsync(followUp);
+        Assert.Equal("finance", next.Headers.GetValues("X-OpenAgent-Selected-Agent-Id").Single());
+        Assert.Equal(decisions, _fixture.PrimaryEngine.DecisionCount);
+    }
+
     [Theory]
     [InlineData("ok")]
     [InlineData("好的，继续")]

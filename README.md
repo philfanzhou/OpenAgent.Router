@@ -5,6 +5,7 @@
 会话 ID 与聊天 ID 由 Router 生成并传给下游；`model` 指定 Agent 时跳过模型，否则由专用决策模型从授权候选中选择。后续请求保持原 Agent，未知会话 ID 返回 404。共享状态保存在 Redis。
 
 - [部署、配置与请求协议](docs/deployment.md)
+- [API 调用指南](docs/api-usage.md)
 - [需求、架构分析与已确认决策](docs/router-deployment-and-agent-selection.md)
 - [服务发现、限流与运维](docs/router.md)
 

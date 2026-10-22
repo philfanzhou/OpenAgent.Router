@@ -9,4 +9,5 @@ internal sealed record AgentCatalogEntry(
 internal sealed record AgentSelection(
     string? AgentId,
     string ProviderId,
-    string? ConversationId = null);
+    string? ConversationId = null,
+    string? PreviousAgentId = null);

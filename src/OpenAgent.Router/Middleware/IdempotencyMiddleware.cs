@@ -234,7 +234,7 @@ internal sealed class IdempotencyMiddleware(
     }
 
     private static Dictionary<string, string> GetRoutingHeaders(HttpContext context) =>
-        new[] { "X-Session-Id", "X-Chat-Id", "X-OpenAgent-Selected-Agent-Id" }
+        new[] { "X-Session-Id", "X-Chat-Id", "X-OpenAgent-Selected-Agent-Id", "X-OpenAgent-Previous-Agent-Id" }
             .Where(name => context.Response.Headers.ContainsKey(name))
             .ToDictionary(name => name, name => context.Response.Headers[name].ToString());
 

@@ -51,6 +51,31 @@ public class AgentSelectionServiceTests
     }
 
     [Fact]
+    public async Task ExplicitSwitch_RebindsExistingSessionAndFutureTurnsUseNewAgent()
+    {
+        var store = new StubConversationProviderStore();
+        var service = CreateService(
+        [
+            new StubProvider("engine", [Agent("general")]),
+            new StubProvider("partner", [Agent("finance")])
+        ], store: store);
+        AgentSelection first = (await service.SelectAsync(
+            "hello", null, "general", CancellationToken.None))!;
+
+        AgentSelection switched = (await service.SelectAsync(
+            "invoice", first.ConversationId, null, CancellationToken.None,
+            switchAgentId: "finance"))!;
+        AgentSelection followUp = (await service.SelectAsync(
+            "more", first.ConversationId, null, CancellationToken.None))!;
+
+        Assert.Equal("finance", switched.AgentId);
+        Assert.Equal("general", switched.PreviousAgentId);
+        Assert.Equal(first.ConversationId, switched.ConversationId);
+        Assert.Equal("finance", followUp.AgentId);
+        Assert.Equal("partner", followUp.ProviderId);
+    }
+
+    [Fact]
     public async Task UnknownConversation_IsRejectedWithoutModelOrProviderProbe()
     {
         var selector = new StubSelector("general");
@@ -300,6 +325,18 @@ public class AgentSelectionServiceTests
             }
 
             return Task.FromResult(bound);
+        }
+        public Task<ConversationProviderAffinity> CompareExchangeAsync(
+            string tenantId, string conversationId, ConversationProviderAffinity expected,
+            ConversationProviderAffinity replacement, CancellationToken cancellationToken = default)
+        {
+            string key = $"{tenantId}|{conversationId}";
+            if (_affinities.TryGetValue(key, out ConversationProviderAffinity? current) && current == expected)
+            {
+                _affinities[key] = replacement;
+                current = replacement;
+            }
+            return Task.FromResult(current ?? throw new InvalidOperationException());
         }
     }
 }

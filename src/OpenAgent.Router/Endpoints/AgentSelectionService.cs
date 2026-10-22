@@ -19,7 +19,8 @@ internal sealed class AgentSelectionService(
         string? explicitAgentId,
         CancellationToken cancellationToken,
         string? authenticationToken = null,
-        ChatProtocol? protocol = null)
+        ChatProtocol? protocol = null,
+        string? switchAgentId = null)
     {
         if (string.IsNullOrWhiteSpace(userContext.TenantId))
         {
@@ -33,6 +34,34 @@ internal sealed class AgentSelectionService(
                 requestContext, conversationId, cancellationToken).ConfigureAwait(false)
                 ?? throw new AgentRoutingException(StatusCodes.Status404NotFound,
                     RouterErrorCodes.ConversationNotFound, "Conversation was not found");
+            if (!string.IsNullOrWhiteSpace(switchAgentId))
+            {
+                if (!string.IsNullOrWhiteSpace(explicitAgentId) && !string.Equals(
+                    explicitAgentId, switchAgentId, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new AgentRoutingException(StatusCodes.Status409Conflict,
+                        RouterErrorCodes.ConversationProviderMismatch,
+                        "The request model must match the switch target Agent");
+                }
+                if (string.Equals(switchAgentId, affinity.AgentId, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new AgentRoutingException(StatusCodes.Status400BadRequest,
+                        RouterErrorCodes.InvalidRoutingRequest,
+                        "Switch target must differ from the current Agent");
+                }
+                AgentCatalogEntry target = await ResolveAuthorizedAsync(
+                    requestContext, switchAgentId, cancellationToken).ConfigureAwait(false);
+                await conversations.SwitchAsync(requestContext, conversationId, affinity,
+                    target.ProviderId, target.Agent.AgentId, cancellationToken).ConfigureAwait(false);
+                RouterMeter.RecordProviderSelection("switch");
+                RouterMeter.RecordAgentSelection(target.Agent.AgentId, "switch");
+                RouterMeter.RecordAgentSwitch(affinity.AgentId!, target.Agent.AgentId);
+                logger?.LogInformation(
+                    "Agent route switched: {PreviousAgentId} {ProviderId} {AgentId}",
+                    affinity.AgentId, target.ProviderId, target.Agent.AgentId);
+                return new AgentSelection(
+                    target.Agent.AgentId, target.ProviderId, conversationId, affinity.AgentId);
+            }
             if (!string.IsNullOrWhiteSpace(explicitAgentId) && !string.Equals(
                 explicitAgentId, affinity.AgentId, StringComparison.OrdinalIgnoreCase))
             {
@@ -48,9 +77,17 @@ internal sealed class AgentSelectionService(
                     RouterErrorCodes.AgentProviderUnavailable, "Conversation Agent is unavailable on its original Provider");
             }
             RouterMeter.RecordProviderSelection("conversation");
+            RouterMeter.RecordAgentSelection(entry.Agent.AgentId, "conversation");
             logger?.LogInformation("Agent route selected: {SelectionSource} {ProviderId} {AgentId}",
                 "conversation", affinity.ProviderId, entry.Agent.AgentId);
             return new AgentSelection(entry.Agent.AgentId, affinity.ProviderId, conversationId);
+        }
+
+        if (!string.IsNullOrWhiteSpace(switchAgentId))
+        {
+            throw new AgentRoutingException(StatusCodes.Status400BadRequest,
+                RouterErrorCodes.InvalidRoutingRequest,
+                "An existing session is required to switch Agents");
         }
 
         AgentCatalogEntry? selected;
@@ -102,6 +139,7 @@ internal sealed class AgentSelectionService(
                 RouterErrorCodes.ConversationStorageUnavailable, "Conversation could not be created");
         }
         RouterMeter.RecordProviderSelection(source);
+        RouterMeter.RecordAgentSelection(selected.Agent.AgentId, source);
         logger?.LogInformation("Agent route selected: {SelectionSource} {ProviderId} {AgentId}",
             source, selected.ProviderId, selected.Agent.AgentId);
         return new AgentSelection(selected.Agent.AgentId, selected.ProviderId, newConversationId);

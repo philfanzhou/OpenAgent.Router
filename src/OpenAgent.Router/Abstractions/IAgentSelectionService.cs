@@ -10,5 +10,6 @@ internal interface IAgentSelectionService
         string? explicitAgentId,
         CancellationToken cancellationToken,
         string? authenticationToken = null,
-        ChatProtocol? protocol = null);
+        ChatProtocol? protocol = null,
+        string? switchAgentId = null);
 }
