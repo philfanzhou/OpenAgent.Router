@@ -176,6 +176,16 @@ public static class ServiceCollectionExtensions
                 metrics
                     .AddAspNetCoreInstrumentation()
                     .AddMeter(options.OpenTelemetrySource)
+                    .AddView("openagent_router_decision_confidence",
+                        new ExplicitBucketHistogramConfiguration
+                        {
+                            Boundaries = [0, 0.1, 0.25, 0.5, 0.7, 0.8, 0.9, 0.95, 1]
+                        })
+                    .AddView("openagent_router_decision_duration_seconds",
+                        new ExplicitBucketHistogramConfiguration
+                        {
+                            Boundaries = [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5]
+                        })
                     .AddPrometheusExporter();
 
                 if (otlpEndpoint != null)
