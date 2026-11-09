@@ -101,7 +101,7 @@ Router 监听 5001，输出日志到标准输出，以非 root 用户运行。�
 docker build -t openagent-router:local .
 ```
 
-CI 在 PR 中构建、测试并验证生产镜像的非 root 用户、存活与就绪探针。合并到 `main` 后发布 `ghcr.io/philfanzhou/openagent.router:sha-<完整提交 SHA>`；部署可使用该不可变版本标签。拉取现有镜像时设置 `ROUTER_IMAGE`，执行 `docker compose ... pull router` 后用 `up -d --no-build`。
+CI 在 PR 中构建、测试并验证生产镜像的非 root 用户、存活与就绪探针。合并到 `main` 只运行 CI，不发布镜像；推送版本标签（`v*.*.*`）后才发布 `ghcr.io/philfanzhou/openagent.router:sha-<完整提交 SHA>`，部署可使用该不可变版本标签。拉取现有镜像时设置 `ROUTER_IMAGE`，执行 `docker compose ... pull router` 后用 `up -d --no-build`。
 
 ## 健康检查与验证
 

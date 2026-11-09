@@ -3,6 +3,7 @@ on:
   pull_request:
   push:
     branches: [main, dev]
+    tags: ['v*.*.*']
 permissions:
   contents: read
 jobs:
@@ -28,7 +29,9 @@ jobs:
       - name: Verify production container and probes
         run: python3 tests/container_smoke.py openagent-router:ci
   publish:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # A release publishes; a merge to the default branch only runs CI. Image pushes therefore
+    # happen only for a version tag and never on a `main` push.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     needs: verify
     runs-on: ubuntu-latest
     permissions:
