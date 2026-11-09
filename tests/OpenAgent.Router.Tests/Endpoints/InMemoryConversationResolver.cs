@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Http;
 using OpenAgent.Router.Models;
 
 namespace OpenAgent.Router.Tests.Endpoints;
@@ -24,4 +25,19 @@ internal sealed class InMemoryConversationResolver : IConversationProviderResolv
     public Task OverwriteAsync(AgentProviderRequestContext requestContext, string conversationId,
         string providerId, string agentId, string sessionId, CancellationToken cancellationToken = default) =>
         BindAsync(requestContext, conversationId, providerId, agentId, cancellationToken, sessionId);
+    public Task<ConversationProviderAffinity> SwitchAsync(AgentProviderRequestContext requestContext,
+        string conversationId, ConversationProviderAffinity expected, string providerId, string agentId,
+        CancellationToken cancellationToken = default)
+    {
+        if (!Records.TryGetValue(conversationId, out ConversationProviderAffinity? current) || current != expected)
+        {
+            throw new AgentRoutingException(StatusCodes.Status409Conflict,
+                RouterErrorCodes.ConversationSwitchConflict, "Conversation changed");
+        }
+        return Task.FromResult(Records[conversationId] = expected with
+        {
+            ProviderId = providerId,
+            AgentId = agentId
+        });
+    }
 }

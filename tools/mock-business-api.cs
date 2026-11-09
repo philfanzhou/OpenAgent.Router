@@ -1,16 +1,23 @@
 #:sdk Microsoft.NET.Sdk.Web
-#:property TargetFramework=net8.0
+#:property TargetFramework=net10.0
 #:property PublishAot=false
 #:property TreatWarningsAsErrors=false
 #:property JsonSerializerIsReflectionEnabledByDefault=true
 // Mock downstream business system speaking the standard OpenAI / Anthropic APIs, as Router expects.
-// Run: dotnet run tools/mock-business-api.cs   (listens on http://localhost:5290)
-var agents = new[]
+// Run from the repository root: dotnet run tools/mock-business-api.cs (listens on http://localhost:5290).
+using System.Text.Json;
+
+string agentFile = Path.Combine(AppContext.BaseDirectory, "agent.json");
+if (!File.Exists(agentFile))
 {
-    new { id = "general", @object = "model", display_name = "通用助手", description = "通用问答、写作、翻译" },
-    new { id = "finance", @object = "model", display_name = "财务助手", description = "报销、发票、订单退款、对账分析" },
-    new { id = "hr", @object = "model", display_name = "人事助手", description = "请假、入职、薪资与考勤政策咨询" },
-};
+    agentFile = Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, "tools", "agent.json"));
+}
+
+JsonElement agents;
+using (JsonDocument document = JsonDocument.Parse(await File.ReadAllTextAsync(agentFile)))
+{
+    agents = document.RootElement.Clone();
+}
 
 var app = WebApplication.CreateBuilder(args).Build();
 app.Urls.Add("http://localhost:5290");

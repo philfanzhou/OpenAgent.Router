@@ -35,7 +35,8 @@ public class IntentAgentSelectorTests
             new AgentUserContext { UserId = "user", TenantId = "tenant" }, "Bearer caller-secret"),
             "find invoice", Candidates, CancellationToken.None);
         Assert.Equal("finance", result);
-        Assert.Equal("Bearer routing-secret", handler.Authorization);
+        Assert.Equal("routing-secret", handler.ApiKey);
+        Assert.Null(handler.Authorization);
         using var body = JsonDocument.Parse(handler.RequestBody!);
         Assert.Contains("find invoice", body.RootElement.GetProperty("state").GetString());
         JsonElement question = body.RootElement.GetProperty("questions").GetProperty("agent");
@@ -85,6 +86,31 @@ public class IntentAgentSelectorTests
     }
 
     [Fact]
+    public async Task OversizedCatalog_UsesEmbeddingPreselectionBeforeDecisionModel()
+    {
+        AgentSummary[] candidates =
+        [
+            .. Enumerable.Range(0, 8).Select(index => new AgentSummary
+            {
+                AgentId = $"generic-{index}",
+                Description = $"General unrelated capability {index}"
+            }),
+            new() { AgentId = "finance", Description = "Invoice reimbursement and billing support" }
+        ];
+        var handler = new Handler();
+        var selector = Create(handler, maxCandidates: 3);
+
+        string? result = await selector.SelectAsync(
+            Context(), "help with an invoice reimbursement", candidates, CancellationToken.None);
+
+        Assert.Equal("finance", result);
+        using var body = JsonDocument.Parse(handler.RequestBody!);
+        JsonElement criteria = body.RootElement.GetProperty("questions").GetProperty("agent").GetProperty("criteria");
+        Assert.True(criteria.TryGetProperty("finance", out _));
+        Assert.InRange(criteria.EnumerateObject().Count(), 1, 3);
+    }
+
+    [Fact]
     public async Task OversizedResponse_ReturnsNoSelection()
     {
         var selector = Create(new Handler { Content = "{\"pad\":\"" + new string('x', 20000) + "\"}" });
@@ -92,10 +118,10 @@ public class IntentAgentSelectorTests
     }
 
     private static AgentProviderRequestContext Context() => new(new AgentUserContext { UserId = "user", TenantId = "tenant" });
-    private static IntentAgentSelector Create(Handler handler, int timeoutMs = 1000) => new(
+    private static IntentAgentSelector Create(Handler handler, int timeoutMs = 1000, int maxCandidates = 62) => new(
         new ClientFactory(handler), Microsoft.Extensions.Options.Options.Create(new DecisionModelOptions
         {
-            Endpoint = "http://model/v1/decisions", ApiKey = "routing-secret"
+            Endpoint = "http://model/v1/decisions", ApiKey = "routing-secret", MaxCandidates = maxCandidates
         }), Microsoft.Extensions.Options.Options.Create(new IntentRecognitionOptions { TimeoutMs = timeoutMs }),
         NullLogger<IntentAgentSelector>.Instance);
 
@@ -110,11 +136,13 @@ public class IntentAgentSelectorTests
         public HttpStatusCode Status { get; init; } = HttpStatusCode.OK;
         public bool Delay { get; init; }
         public string? RequestBody { get; private set; }
+        public string? ApiKey { get; private set; }
         public string? Authorization { get; private set; }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
         {
             if (Delay) await Task.Delay(Timeout.Infinite, token);
             RequestBody = await request.Content!.ReadAsStringAsync(token);
+            ApiKey = request.Headers.GetValues("X-API-Key").SingleOrDefault();
             Authorization = request.Headers.Authorization?.ToString();
             return new HttpResponseMessage(Status)
             {

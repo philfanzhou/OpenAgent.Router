@@ -12,7 +12,7 @@ internal sealed class DecisionModelOptions
     // The model rejects (HTTP 400, no truncation) any request over 8192 tokens, counting the message,
     // instructions and every candidate. Treated as 1 char = 1 token, the worst case for CJK text.
     public int MaxInputCharacters { get; set; } = 7500;
-    public int MaxCandidates { get; set; } = 100;
+    public int MaxCandidates { get; set; } = 62;
     public int MaxDescriptionCharacters { get; set; } = 2000;
     public int MaxResponseBytes { get; set; } = 16384;
 
@@ -21,7 +21,7 @@ internal sealed class DecisionModelOptions
         && endpoint.Scheme is "http" or "https"
         && string.IsNullOrEmpty(endpoint.UserInfo)
         && (string.IsNullOrEmpty(options.ApiKeyFile) || File.Exists(options.ApiKeyFile))
-        && options.MaxPromptCharacters is > 0 and <= 1000000 && options.MaxInputCharacters > 0 && options.MaxCandidates is > 0 and <= 1000
+        && options.MaxPromptCharacters is > 0 and <= 1000000 && options.MaxInputCharacters > 0 && options.MaxCandidates is > 0 and <= 62
         && options.MaxDescriptionCharacters is > 0 and <= 16000
         && options.MaxResponseBytes is > 0 and <= 1048576;
 }

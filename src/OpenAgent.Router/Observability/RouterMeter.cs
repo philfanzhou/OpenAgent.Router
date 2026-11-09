@@ -33,6 +33,19 @@ internal static class RouterMeter
     private static readonly Histogram<double> SseDuration = Meter.CreateHistogram<double>(
         "openagent_router_sse_duration_seconds",
         unit: "s");
+    private static readonly Histogram<double> DecisionConfidence = Meter.CreateHistogram<double>(
+        "openagent_router_decision_confidence");
+    private static readonly Histogram<double> DecisionDuration = Meter.CreateHistogram<double>(
+        "openagent_router_decision_duration_seconds",
+        unit: "s");
+    private static readonly Counter<long> AgentSelectionsTotal = Meter.CreateCounter<long>(
+        "openagent_router_agent_selections_total");
+    private static readonly Counter<long> MisroutesTotal = Meter.CreateCounter<long>(
+        "openagent_router_misroutes_total");
+    private static readonly Counter<long> AgentSwitchesTotal = Meter.CreateCounter<long>(
+        "openagent_router_agent_switches_total");
+    private static readonly Histogram<int> CandidatePreselectionCount = Meter.CreateHistogram<int>(
+        "openagent_router_candidate_preselection_count");
 
     public static void RecordRequest(string? action)
     {
@@ -110,6 +123,51 @@ internal static class RouterMeter
         });
     }
 
+    public static void RecordDecision(double? confidence, TimeSpan duration, string outcome)
+    {
+        var tags = new TagList { { "outcome", Normalize(outcome) } };
+        DecisionDuration.Record(duration.TotalSeconds, tags);
+        if (confidence is { } value && double.IsFinite(value) && value is >= 0 and <= 1)
+        {
+            DecisionConfidence.Record(value, tags);
+        }
+    }
+
+    public static void RecordAgentSelection(string agentId, string source)
+    {
+        AgentSelectionsTotal.Add(1, new TagList
+        {
+            { "agent_id", NormalizeAgentId(agentId) },
+            { "source", NormalizeSelectionSource(source) }
+        });
+    }
+
+    public static void RecordMisroute(string selectedAgentId, string expectedAgentId)
+    {
+        MisroutesTotal.Add(1, new TagList
+        {
+            { "selected_agent_id", NormalizeAgentId(selectedAgentId) },
+            { "expected_agent_id", NormalizeAgentId(expectedAgentId) }
+        });
+    }
+
+    public static void RecordAgentSwitch(string previousAgentId, string agentId)
+    {
+        AgentSwitchesTotal.Add(1, new TagList
+        {
+            { "previous_agent_id", NormalizeAgentId(previousAgentId) },
+            { "agent_id", NormalizeAgentId(agentId) }
+        });
+    }
+
+    public static void RecordCandidatePreselection(int originalCount, int selectedCount)
+    {
+        CandidatePreselectionCount.Record(selectedCount, new TagList
+        {
+            { "catalog_size", BucketCatalogSize(originalCount) }
+        });
+    }
+
     public static void RecordAclDenial() =>
         AclDenialsTotal.Add(1, new TagList { { "reason", "agent_acl" } });
 
@@ -126,10 +184,25 @@ internal static class RouterMeter
             ? "unknown"
             : value.Trim().ToLowerInvariant();
 
+    private static string NormalizeAgentId(string value)
+    {
+        string normalized = value.Trim().ToLowerInvariant();
+        return normalized.Length <= 128 ? normalized : normalized[..128];
+    }
+
+    private static string BucketCatalogSize(int count) => count switch
+    {
+        <= 62 => "le_62",
+        <= 100 => "le_100",
+        <= 500 => "le_500",
+        _ => "gt_500"
+    };
+
     private static string NormalizeSelectionSource(string value) => value.Trim().ToLowerInvariant() switch
     {
         "explicit" => "explicit",
         "conversation" => "conversation",
+        "switch" => "switch",
         "intent" => "intent",
         "model" => "model",
         "fallback" => "fallback",

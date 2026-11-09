@@ -43,6 +43,22 @@ public static class RouterEndpointExtensions
             ModelCatalogEndpointHandler.HandleAsync(catalog, userContext, context, cancellationToken))
             .WithName("RouterListModels")
             .WithTags("Models");
+        app.MapPost("/v1/router/feedback", (
+            RoutingFeedbackRequest request,
+            HttpContext context,
+            IServiceProvider services,
+            CancellationToken cancellationToken) =>
+            RoutingFeedbackEndpointHandler.HandleAsync(
+                request,
+                context,
+                services.GetRequiredService<IAgentUserContext>(),
+                services.GetRequiredService<IConversationProviderResolver>(),
+                services.GetRequiredService<IAgentCatalogService>(),
+                services.GetRequiredService<IRoutingQualitySampleStore>(),
+                services.GetRequiredService<Microsoft.Extensions.Options.IOptions<OpenAgent.Router.Options.RoutingQualityOptions>>(),
+                cancellationToken))
+            .WithName("RouterRoutingFeedback")
+            .WithTags("Routing Quality");
         app.MapGet("/api/v1/agent/me", (
             HttpContext context,
             IHttpForwarder forwarder,

@@ -17,4 +17,5 @@ internal static class RouterErrorCodes
     internal const string NoAgentAvailable = "no-agent-available";
     internal const string InvalidRoutingRequest = "invalid-routing-request";
     internal const string ConversationStorageUnavailable = "conversation-storage-unavailable";
+    internal const string ConversationSwitchConflict = "conversation-switch-conflict";
 }

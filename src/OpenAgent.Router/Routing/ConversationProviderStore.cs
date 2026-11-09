@@ -68,6 +68,44 @@ internal sealed class ConversationProviderStore(
         finally { _memoryGate.Release(); }
     }
 
+    public async Task<ConversationProviderAffinity> CompareExchangeAsync(
+        string tenantId,
+        string conversationId,
+        ConversationProviderAffinity expected,
+        ConversationProviderAffinity replacement,
+        CancellationToken cancellationToken)
+    {
+        string key = BuildKey(tenantId, conversationId);
+        if (redis != null)
+        {
+            IDatabase database = redis.GetDatabase();
+            string expectedValue = JsonSerializer.Serialize(expected, JsonOptions);
+            string replacementValue = JsonSerializer.Serialize(replacement, JsonOptions);
+            ITransaction transaction = database.CreateTransaction();
+            transaction.AddCondition(Condition.StringEqual(key, expectedValue));
+            _ = transaction.StringSetAsync(key, replacementValue, GetTimeToLive(replacement));
+            bool committed = await transaction.ExecuteAsync().WaitAsync(cancellationToken).ConfigureAwait(false);
+            return committed
+                ? replacement
+                : await GetAsync(tenantId, conversationId, cancellationToken).ConfigureAwait(false)
+                    ?? throw new InvalidOperationException("Conversation binding expired during switch");
+        }
+
+        await _memoryGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ConversationProviderAffinity? current = await GetAsync(tenantId, conversationId, cancellationToken)
+                .ConfigureAwait(false);
+            if (current != expected)
+            {
+                return current ?? throw new InvalidOperationException("Conversation binding expired during switch");
+            }
+            await SetAsync(tenantId, conversationId, replacement, cancellationToken).ConfigureAwait(false);
+            return replacement;
+        }
+        finally { _memoryGate.Release(); }
+    }
+
     private static TimeSpan GetTimeToLive(ConversationProviderAffinity affinity)
     {
         TimeSpan remaining = (affinity.ExpiresAt ?? DateTimeOffset.UtcNow.AddDays(30)) - DateTimeOffset.UtcNow;

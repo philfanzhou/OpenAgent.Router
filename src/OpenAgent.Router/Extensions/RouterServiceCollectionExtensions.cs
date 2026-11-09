@@ -26,6 +26,10 @@ public static class RouterServiceCollectionExtensions
             .Validate(options => !configuration.GetValue("RouterSettings:IntentRecognition:Enabled", true)
                 || DecisionModelOptions.IsValid(options), "Router decision model configuration is invalid")
             .ValidateOnStart();
+        services.AddOptions<RoutingQualityOptions>()
+            .Bind(configuration.GetSection(RoutingQualityOptions.SectionName))
+            .Validate(RoutingQualityOptions.IsValid, "Routing quality configuration is invalid")
+            .ValidateOnStart();
         services.AddOptions<ConversationRoutingOptions>()
             .Bind(configuration.GetSection(ConversationRoutingOptions.SectionName))
             .Validate(options => options.RetentionDays is > 0 and <= 3650
@@ -47,6 +51,7 @@ public static class RouterServiceCollectionExtensions
         services.AddSingleton<IAgentForwarder, AgentForwarder>();
         services.AddSingleton<IIntentAgentSelector, IntentAgentSelector>();
         services.AddSingleton<DecisionModelStatus>();
+        services.AddSingleton<IRoutingQualitySampleStore, RoutingQualitySampleStore>();
         services.AddScoped<IAgentSelectionService, AgentSelectionService>();
         services.AddSingleton<ChatSessionTracker>();
         services.AddSingleton(new RouterCacheSettings(configuration));
